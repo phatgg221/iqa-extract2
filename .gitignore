@@ -42,3 +42,6 @@ next-env.d.ts
 
 # ...but the template is safe to commit, and shows what is needed.
 !.env.example
+
+# Generated test fixtures (large PDFs) — not source.
+generated/
