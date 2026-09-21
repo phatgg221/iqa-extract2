@@ -3,12 +3,14 @@
 The async pipeline from [async-extraction.md](./async-extraction.md) is built.
 This is how to turn it on.
 
-> **Not yet verified end to end.** The code compiles, typechecks, lints and the
-> 29 extraction tests pass, but the pipeline has **not been run against a live
-> Supabase project or a live queue**. The CLI on this machine is signed into a
-> different account than the project `bmdscdgbjneplmwxdlig`, so the migrations
-> could not be applied or exercised from here. Steps 1–3 are yours; step 6 is
-> how you confirm it works.
+> **Verified end to end** against the live project on 21 September 2026:
+> upload to the bucket, job row, claim, worker, OCR, result on screen. All 45
+> tests pass, and `KBS-10241`, `KBS-10255`, `KBS-10262` and `KBS-DR118` were
+> each run through the real pipeline.
+>
+> Two things are still **unproven**: the Vercel Queues push consumer (the runs
+> above were drained by the polling worker), and any of it deployed rather than
+> local.
 
 ---
 
@@ -44,6 +46,9 @@ and run **both** migrations, in order:
 2. [`0002_claim_job_by_id.sql`](../supabase/migrations/0002_claim_job_by_id.sql) —
    `claim_extraction_job_by_id()`, which is what makes the push consumer safe
    under at-least-once delivery.
+3. [`0003_reap_unclaimed_jobs.sql`](../supabase/migrations/0003_reap_unclaimed_jobs.sql) —
+   also reaps jobs stuck in `queued` that nothing ever picked up, not just ones
+   that died mid-read.
 
 Or, from the account that owns the project:
 
@@ -119,10 +124,10 @@ Run the eight-page sample, which exercises everything, and check all four:
 
 | Check | Expected |
 |---|---|
-| Consumer log | `succeeded — 21 line items, 4 refusals across 8 pages` |
+| Consumer log | `succeeded — 24 line items, 3 refusals across 8 pages` (21 and 4 without OCR) |
 | Storage | A new UUID folder in `documents` holding the PDF |
 | `extraction_jobs` row | `status = 'succeeded'`, `pages_done = 8`, `result` populated |
-| The page | Page 4 refused, no document total, four refusals — identical to the synchronous version |
+| The page | Page 4's three lines badged `OCR`, and still no document total |
 
 If the screen matches what the synchronous version produced, the whole pipeline
 is behaving.
