@@ -376,11 +376,15 @@ function decideDocumentTotal(
     humanMessage:
       `No overall total is being reported for this document. ` +
       `${reasons.length ? `${capitalise(reasons.join('; '))}. ` : ''}` +
-      (lineItems.length > 0
-        ? `Adding the pages up would produce a number that does not appear anywhere ` +
-          `on the document, so the line items are listed per page instead for you ` +
-          `to total yourself.`
-        : `No line items could be read from it either, so there is nothing to add up.`),
+      (lineItems.length === 0
+        ? `No line items could be read from it either, so there is nothing to add up.`
+        : pages.length === 1
+          ? `Adding the lines up ourselves would produce a number that does not ` +
+            `appear anywhere on the document, so they are listed below as printed ` +
+            `for you to total yourself.`
+          : `Adding the pages up would produce a number that does not appear ` +
+            `anywhere on the document, so the line items are listed per page ` +
+            `instead for you to total yourself.`),
     evidence,
   });
 
