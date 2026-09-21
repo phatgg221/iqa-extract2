@@ -37,6 +37,10 @@ service reports no total and says all four things.
 
 ## How it works
 
+A full technical walkthrough — libraries, types, algorithms, the schema and
+the measured constants — is in [docs/how-it-works.md](docs/how-it-works.md).
+The short version:
+
 ```
 app/api/extract/route.ts   HTTP boundary
 lib/extract/pdf.ts         PDF -> positioned text cells (the only pdfjs-aware file)
