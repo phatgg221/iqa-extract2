@@ -40,8 +40,16 @@ function progressReporter(jobId: string) {
   };
 }
 
-async function markFailed(job: JobRow, code: string, humanMessage: string) {
-  await admin()
+/**
+ * Records a failure against a job id, whatever state it is in.
+ *
+ * Exported because the consumer needs it for a case `runClaimedJob` never
+ * sees: the job could not even be claimed, and the queue has run out of
+ * retries. Without this the row sits untouched and the person watching gets
+ * a spinner and then a timeout, while the real reason is sitting in a log.
+ */
+export async function failJobById(jobId: string, code: string, humanMessage: string) {
+  const { error } = await admin()
     .from('extraction_jobs')
     .update({
       status: 'failed',
@@ -49,9 +57,15 @@ async function markFailed(job: JobRow, code: string, humanMessage: string) {
       failure_message: humanMessage,
       finished_at: new Date().toISOString(),
     })
-    .eq('id', job.id);
+    .eq('id', jobId)
+    .neq('status', 'succeeded'); // never overwrite a result we already have
 
-  console.error(`[${job.id}] failed (${code}): ${humanMessage}`);
+  if (error) console.error(`[${jobId}] could not record failure: ${error.message}`);
+  else console.error(`[${jobId}] failed (${code}): ${humanMessage}`);
+}
+
+async function markFailed(job: JobRow, code: string, humanMessage: string) {
+  await failJobById(job.id, code, humanMessage);
 }
 
 /**
