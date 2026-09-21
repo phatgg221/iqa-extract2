@@ -544,6 +544,41 @@ Vercel Queues → /api/queues/extract → claim → download → extract → wri
 GET /api/jobs/{id}          → status, progress, result or failure
 ```
 
+The browser does not poll for the answer. It subscribes to a Realtime
+broadcast channel named `job:{uuid}`, and the consumer publishes a small
+`JobSignal` on every transition:
+
+```ts
+await admin().channel(`job:${jobId}`).httpSend('update', {
+  status: 'processing', pagesDone, pageCount,
+});
+```
+
+`httpSend` is a stateless REST broadcast, so a consumer that lives for a single
+invocation never has to hold a socket open.
+
+**Broadcast rather than `postgres_changes`**, because postgres changes are
+filtered by RLS and `extraction_jobs` has RLS on with no policies. Opening it
+for reads would hand every document's extracted contents to anyone holding the
+publishable key. A channel keyed by the job's UUID is capability-based —
+knowing the id is already exactly what `GET /api/jobs/{id}` requires.
+
+**The signal never carries the result**, only the news that there is one: a
+400-page `ExtractionResult` is megabytes and would exceed the broadcast payload
+limit. The browser fetches the authoritative answer once it sees a terminal
+status.
+
+**A 10s backstop poll remains, and is required for correctness rather than as
+a belt-and-braces extra.** Broadcast is fire-and-forget with no replay, so a
+message sent before this browser finished subscribing — or while the socket was
+reconnecting — is gone. Realtime alone would be *less* reliable than polling.
+So the order is: subscribe, then read once to catch anything already missed,
+then let broadcasts drive it, with the backstop covering the rest.
+
+Measured on the eight-page sample: **2 HTTP requests** for the whole job
+(the opening reconcile and one triggered by `succeeded`), against roughly 5 for
+the old 1.5s loop, with progress arriving every ~0.35s instead of every 1.5s.
+
 The direct upload is the point: Vercel caps serverless request bodies at
 ~4.5 MB, so routing a large file through a function fails before any of our own
 error handling runs.

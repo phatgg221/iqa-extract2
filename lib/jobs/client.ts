@@ -1,5 +1,5 @@
 /**
- * The browser half of the job flow: create, upload, notify, poll.
+ * The browser half of the job flow: create, upload, notify, then watch.
  *
  * Every failure path here produces a specific sentence. A queue adds steps
  * where a reason can go missing — the signed URL, the direct upload, the
@@ -8,10 +8,25 @@
  */
 
 import { browserClient } from '@/lib/supabase/browser';
-import { isTerminal, type CreatedJob, type JobStatusResponse } from './types';
+import {
+  isTerminal,
+  type CreatedJob,
+  type JobSignal,
+  type JobStatusResponse,
+} from './types';
 
-const POLL_INTERVAL_MS = 1500;
-/** Generous, but finite: a poll that never gives up is a spinner forever. */
+/**
+ * How often we ask anyway, with Realtime doing the real work.
+ *
+ * This is not belt-and-braces, it is required for correctness. A broadcast is
+ * fire-and-forget with no replay: a message sent before this browser finished
+ * subscribing is gone, and so is one sent while the socket was reconnecting.
+ * Realtime alone would be *less* reliable than polling, not more. So the
+ * subscription makes the page feel instant and this makes it correct.
+ */
+const BACKSTOP_INTERVAL_MS = 10_000;
+
+/** Generous, but finite: a wait that never gives up is a spinner forever. */
 const POLL_TIMEOUT_MS = 10 * 60 * 1000;
 
 export class JobError extends Error {
@@ -89,7 +104,47 @@ async function fetchStatus(jobId: string): Promise<JobStatusResponse> {
 export interface SubmitCallbacks {
   onJobCreated?: (jobId: string) => void;
   onUploaded?: () => void;
-  onProgress?: (status: JobStatusResponse) => void;
+  onProgress?: (status: JobSignal) => void;
+}
+
+/**
+ * Listens for a job's progress on a Realtime channel named after its id.
+ *
+ * Broadcast rather than `postgres_changes` on purpose. Postgres changes are
+ * filtered by RLS, and `extraction_jobs` has RLS on with no policies — opening
+ * it up for reads would expose every document's extracted contents to anyone
+ * holding the publishable key. A channel keyed by the job's UUID is
+ * capability-based: knowing the id is already exactly what `GET /api/jobs/{id}`
+ * requires, so this is no weaker than what the page could already do.
+ */
+function watchJob(jobId: string, onSignal: (signal: JobSignal) => void): () => void {
+  let channel: ReturnType<ReturnType<typeof browserClient>['channel']> | null = null;
+
+  try {
+    const client = browserClient();
+    channel = client
+      .channel(`job:${jobId}`)
+      .on('broadcast', { event: 'update' }, ({ payload }) => {
+        if (payload && typeof payload.status === 'string') onSignal(payload as JobSignal);
+      });
+    channel.subscribe();
+  } catch (err) {
+    // Realtime is an optimisation. If it cannot start, the backstop still
+    // finishes the job, just less promptly.
+    console.warn(
+      `[${jobId}] could not subscribe for live progress: ` +
+        `${err instanceof Error ? err.message : String(err)}`,
+    );
+    return () => {};
+  }
+
+  return () => {
+    try {
+      void browserClient().removeChannel(channel!);
+    } catch {
+      // Nothing depends on a clean teardown.
+    }
+  };
 }
 
 /**
@@ -108,24 +163,80 @@ export async function submitDocument(
   await markUploaded(job.jobId);
   callbacks.onUploaded?.();
 
-  const deadline = Date.now() + POLL_TIMEOUT_MS;
+  return waitForJob(job.jobId, file.name, callbacks);
+}
 
-  for (;;) {
-    const status = await fetchStatus(job.jobId);
-    callbacks.onProgress?.(status);
+/**
+ * Waits for a job to finish, live.
+ *
+ * The ordering matters. Subscribe first, then read once — anything that
+ * happened between the upload and the subscription is only recoverable by that
+ * first read. After that, broadcasts drive the progress and the backstop
+ * covers whatever the socket misses.
+ */
+function waitForJob(
+  jobId: string,
+  fileName: string,
+  callbacks: SubmitCallbacks,
+): Promise<JobStatusResponse> {
+  return new Promise<JobStatusResponse>((resolve, reject) => {
+    let settled = false;
 
-    if (isTerminal(status.status)) return status;
+    const cleanup = () => {
+      unsubscribe();
+      clearInterval(backstop);
+      clearTimeout(deadline);
+    };
+    const finish = (status: JobStatusResponse) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(status);
+    };
+    const abandon = (err: unknown) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(err);
+    };
 
-    if (Date.now() > deadline) {
-      throw new JobError(
-        `${file.name} is still being read after ` +
-          `${Math.round(POLL_TIMEOUT_MS / 60000)} minutes, which is longer than ` +
-          `expected. It may still finish — the job id is ${job.jobId} — but this ` +
-          `page has stopped waiting for it.`,
-        'POLL_TIMEOUT',
+    /** Asks the server, which is the only authority on the result. */
+    const reconcile = async () => {
+      if (settled) return;
+      try {
+        const status = await fetchStatus(jobId);
+        callbacks.onProgress?.(status);
+        if (isTerminal(status.status)) finish(status);
+      } catch (err) {
+        // A blip should not end the wait; the next backstop tick retries.
+        // A persistent failure ends at the deadline with a real reason.
+        console.warn(
+          `[${jobId}] progress check failed: ` +
+            `${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    };
+
+    const unsubscribe = watchJob(jobId, (signal) => {
+      callbacks.onProgress?.(signal);
+      // The signal never carries the result, only the news that there is one.
+      if (isTerminal(signal.status)) void reconcile();
+    });
+
+    const backstop = setInterval(() => void reconcile(), BACKSTOP_INTERVAL_MS);
+
+    const deadline = setTimeout(() => {
+      abandon(
+        new JobError(
+          `${fileName} is still being read after ` +
+            `${Math.round(POLL_TIMEOUT_MS / 60000)} minutes, which is longer than ` +
+            `expected. It may still finish — the job id is ${jobId} — but this ` +
+            `page has stopped waiting for it.`,
+          'POLL_TIMEOUT',
+        ),
       );
-    }
+    }, POLL_TIMEOUT_MS);
 
-    await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
-  }
+    void reconcile();
+  });
 }

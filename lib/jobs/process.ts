@@ -14,7 +14,7 @@
 import { admin, BUCKET } from '@/lib/supabase/admin';
 import { extract, UnreadablePdfError } from '@/lib/extract/extract';
 import { tesseractOcr } from '@/lib/extract/ocr';
-import type { JobRow } from './types';
+import type { JobRow, JobSignal } from './types';
 
 export const EXTRACTION_TOPIC = 'document-extractions';
 
@@ -50,8 +50,45 @@ export type ProcessOutcome =
   | { outcome: 'processed'; jobId: string }
   | { outcome: 'skipped'; jobId: string; reason: string };
 
+/**
+ * Tells anyone watching that a job moved, over a Realtime channel named after
+ * the job id.
+ *
+ * `httpSend` is a stateless REST broadcast, so a consumer that lives for one
+ * invocation does not have to hold a socket open to use it.
+ *
+ * Entirely best-effort. A broadcast that does not arrive costs the watcher a
+ * few seconds until its backstop poll catches up; a broadcast that threw and
+ * aborted an extraction would cost the whole document.
+ */
+function broadcaster(jobId: string) {
+  const channel = admin().channel(`job:${jobId}`);
+
+  return {
+    async signal(payload: JobSignal) {
+      try {
+        const result = await channel.httpSend('update', payload);
+        if (!result.success) {
+          console.warn(`[${jobId}] broadcast rejected: ${result.error}`);
+        }
+      } catch (err) {
+        console.warn(
+          `[${jobId}] broadcast failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    },
+    async close() {
+      try {
+        await admin().removeChannel(channel);
+      } catch {
+        // Nothing depends on this; the channel is torn down with the process.
+      }
+    },
+  };
+}
+
 /** Progress is only written when the number changes, not once per page. */
-function progressReporter(jobId: string) {
+function progressReporter(jobId: string, notify: (p: JobSignal) => Promise<void>) {
   let lastWritten = -1;
 
   return async (pagesDone: number, pageCount: number) => {
@@ -65,6 +102,8 @@ function progressReporter(jobId: string) {
 
     // A failed progress write must not abort a job that is otherwise fine.
     if (error) console.warn(`[${jobId}] progress update failed: ${error.message}`);
+
+    await notify({ status: 'processing', pagesDone, pageCount });
   };
 }
 
@@ -76,7 +115,12 @@ function progressReporter(jobId: string) {
  * retries. Without this the row sits untouched and the person watching gets
  * a spinner and then a timeout, while the real reason is sitting in a log.
  */
-export async function failJobById(jobId: string, code: string, humanMessage: string) {
+export async function failJobById(
+  jobId: string,
+  code: string,
+  humanMessage: string,
+  notify?: (p: JobSignal) => Promise<void>,
+) {
   const { error } = await admin()
     .from('extraction_jobs')
     .update({
@@ -90,10 +134,8 @@ export async function failJobById(jobId: string, code: string, humanMessage: str
 
   if (error) console.error(`[${jobId}] could not record failure: ${error.message}`);
   else console.error(`[${jobId}] failed (${code}): ${humanMessage}`);
-}
 
-async function markFailed(job: JobRow, code: string, humanMessage: string) {
-  await failJobById(job.id, code, humanMessage);
+  await notify?.({ status: 'failed', pagesDone: 0, pageCount: null });
 }
 
 /**
@@ -110,13 +152,31 @@ async function markFailed(job: JobRow, code: string, humanMessage: string) {
 export async function runClaimedJob(job: JobRow): Promise<void> {
   console.log(`[${job.id}] processing ${job.file_name} (attempt ${job.attempts})`);
 
+  const wire = broadcaster(job.id);
+  const notify = wire.signal;
+  const markFailed = (code: string, humanMessage: string) =>
+    failJobById(job.id, code, humanMessage, notify);
+
+  try {
+    await runWithBroadcast(job, notify, markFailed);
+  } finally {
+    await wire.close();
+  }
+}
+
+async function runWithBroadcast(
+  job: JobRow,
+  notify: (p: JobSignal) => Promise<void>,
+  markFailed: (code: string, humanMessage: string) => Promise<void>,
+): Promise<void> {
+  await notify({ status: 'processing', pagesDone: 0, pageCount: job.page_count });
+
   const { data: blob, error: downloadError } = await admin()
     .storage.from(BUCKET)
     .download(job.object_key);
 
   if (downloadError || !blob) {
     await markFailed(
-      job,
       'DOWNLOAD_FAILED',
       `${job.file_name} could not be fetched from storage, so it was never read. ` +
         `Storage reported: ${downloadError?.message ?? 'no file was returned'}.`,
@@ -129,7 +189,7 @@ export async function runClaimedJob(job: JobRow): Promise<void> {
   let result;
   try {
     result = await extract(bytes, job.file_name, {
-      onPage: progressReporter(job.id),
+      onPage: progressReporter(job.id, notify),
       // Without this, a scanned page is refused outright. With it, the page is
       // read from its pixels and every figure is marked as OCR with its
       // confidence, so a guess still looks like a guess all the way to the screen.
@@ -138,7 +198,6 @@ export async function runClaimedJob(job: JobRow): Promise<void> {
   } catch (err) {
     if (err instanceof UnreadablePdfError) {
       await markFailed(
-        job,
         'PDF_UNREADABLE',
         `${job.file_name} could not be opened. The PDF library reported: ` +
           `${err.message.replace(/\.$/, '')}. The file may be encrypted, ` +
@@ -147,7 +206,6 @@ export async function runClaimedJob(job: JobRow): Promise<void> {
       return;
     }
     await markFailed(
-      job,
       'UNEXPECTED',
       `Reading ${job.file_name} failed unexpectedly: ` +
         `${err instanceof Error ? err.message : String(err)}`,
@@ -168,13 +226,18 @@ export async function runClaimedJob(job: JobRow): Promise<void> {
 
   if (saveError) {
     await markFailed(
-      job,
       'RESULT_NOT_SAVED',
       `${job.file_name} was read successfully, but the result could not be stored: ` +
         `${saveError.message}. Please upload it again.`,
     );
     return;
   }
+
+  await notify({
+    status: 'succeeded',
+    pagesDone: result.pageCount,
+    pageCount: result.pageCount,
+  });
 
   console.log(
     `[${job.id}] succeeded — ${result.lineItems.length} line items, ` +

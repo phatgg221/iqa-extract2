@@ -249,9 +249,15 @@ Honest limits of the design above:
    `/uploaded`, or a Supabase Storage webhook? The webhook is more reliable
    (survives the browser closing mid-upload) but is more config. The browser
    call is simpler and needs the expiry sweep either way.
-2. **Polling or Realtime?** Polling every 2s is trivial and debuggable.
-   Supabase Realtime on the job row is nicer and removes the poll, at the cost
-   of a subscription to manage. Polling first is the defensible start.
+2. ~~**Polling or Realtime?**~~ **Done.** The browser subscribes to a Realtime
+   broadcast channel named after the job id, and the consumer publishes a small
+   signal on every transition. Broadcast rather than `postgres_changes`, because
+   postgres changes are filtered by RLS and opening the table for reads would
+   expose every document's contents to anyone with the publishable key — a
+   channel keyed by the job's UUID is capability-based, exactly like the status
+   endpoint. A 10s backstop poll remains, and is required rather than
+   defensive: broadcasts have no replay, so a message sent before the browser
+   subscribed or during a reconnect is simply gone.
 3. **How long do PDFs stay in the bucket** after extraction succeeds?
 4. **Retry policy.** `attempts` is in the schema but nothing uses it yet. Which
    failures are worth retrying? A corrupt PDF never is; a worker OOM might be.

@@ -53,7 +53,21 @@ export interface CreatedJob {
   bucket: string;
 }
 
-/** What `GET /api/jobs/{id}` returns. */
+/**
+ * The small message broadcast over Realtime as a job moves.
+ *
+ * Deliberately just the state, never the result: a 400-page document's
+ * `ExtractionResult` is megabytes and would blow the broadcast payload limit.
+ * The signal says "something changed"; the browser fetches the authoritative
+ * answer once the job is terminal.
+ */
+export interface JobSignal {
+  status: JobStatus;
+  pagesDone: number;
+  pageCount: number | null;
+}
+
+/** What `GET /api/jobs/{id}` returns. A superset of `JobSignal`. */
 export interface JobStatusResponse {
   jobId: string;
   fileName: string;
