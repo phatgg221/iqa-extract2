@@ -53,6 +53,18 @@ export function pageLevelRefusals(parsed: ParsedPage): Refusal[] {
   const page = parsed.page;
 
   if (!parsed.hasText) {
+    // Three different situations wear the same face on screen, and "this page
+    // is a scan" only covers the first. Saying which one it is turns the
+    // refusal from a dead end into something the reader can act on.
+    const why = !parsed.ocrAttempted
+      ? `Reading a scan needs OCR, which is not switched on for this service, so ` +
+        `nothing from this page has been extracted.`
+      : parsed.ocrProblem
+        ? `We did try to read it from the image and could not: ${parsed.ocrProblem}. ` +
+          `Nothing from this page has been extracted.`
+        : `We read the image with OCR but found no line items on it, so nothing ` +
+          `from this page has been extracted.`;
+
     out.push(
       refusal({
         scope: 'page',
@@ -60,9 +72,7 @@ export function pageLevelRefusals(parsed: ParsedPage): Refusal[] {
         page,
         humanMessage:
           `Page ${page} is a scanned image with no selectable text behind it. ` +
-          `There may well be line items printed on it, but reading them would mean ` +
-          `guessing at the pixels, so nothing from this page has been extracted. ` +
-          `Check this page by eye.`,
+          `${why} Check this page by eye.`,
         evidence: [],
       }),
     );
@@ -180,8 +190,9 @@ function proseContradictionRefusals(parsed: ParsedPage): Refusal[] {
 /**
  * Below this, an OCR'd figure is reported but explicitly not stood behind.
  *
- * Individual words under 60 never make it out of `lib/extract/ocr.ts` at all.
- * This higher bar governs whether a *number* is trustworthy enough to act on:
+ * Obvious noise is already gone by this point (MIN_WORD_CONFIDENCE in
+ * `lib/extract/ocr.ts`). This higher bar governs whether a *number* is
+ * trustworthy enough to act on:
  * a misread digit in a price is the exact failure the whole service exists to
  * prevent, and unlike a missing line it is invisible.
  */

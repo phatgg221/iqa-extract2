@@ -36,7 +36,9 @@ export interface TextCell {
 export interface RawPage {
   page: number;
   cells: TextCell[];
-  /** Set when a page had no text layer and could not be OCR'd either. */
+  /** True when this page had no text layer and an OCR reader was available. */
+  ocrAttempted?: boolean;
+  /** Set when OCR was attempted on this page and could not read it. */
   ocrProblem?: string;
 }
 
@@ -244,14 +246,19 @@ export async function readPages(
       if (cells.length === 0 && options.ocr) {
         const attempt = await rasterizePage(page);
         if ('problem' in attempt) {
-          pages.push({ page: n, cells: [], ocrProblem: attempt.problem });
+          pages.push({ page: n, cells: [], ocrAttempted: true, ocrProblem: attempt.problem });
         } else {
           try {
-            pages.push({ page: n, cells: await options.ocr(attempt.raster) });
+            pages.push({
+              page: n,
+              cells: await options.ocr(attempt.raster),
+              ocrAttempted: true,
+            });
           } catch (err) {
             pages.push({
               page: n,
               cells: [],
+              ocrAttempted: true,
               ocrProblem: `reading the page by OCR failed (${
                 err instanceof Error ? err.message : String(err)
               })`,

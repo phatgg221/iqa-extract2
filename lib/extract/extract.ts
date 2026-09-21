@@ -122,6 +122,8 @@ function parseOnePage(raw: RawPage, refusals: Refusal[]): ParsedPage {
     return {
       page: raw.page,
       hasText: raw.cells.length > 0,
+      ocrAttempted: raw.ocrAttempted ?? false,
+      ocrProblem: raw.ocrProblem ?? null,
       hasTable: false,
       title: null,
       documentNumber: null,

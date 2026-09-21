@@ -49,6 +49,9 @@ export interface ParsedPage {
   page: number;
   /** Empty when the page carries no text layer at all. */
   hasText: boolean;
+  /** Whether OCR was available and tried on this page, and what it hit. */
+  ocrAttempted: boolean;
+  ocrProblem: string | null;
   /** False when text exists but no line-item header could be found. */
   hasTable: boolean;
   title: TextCell | null;
@@ -156,6 +159,8 @@ export function parsePage(raw: RawPage): ParsedPage {
   const base: ParsedPage = {
     page: raw.page,
     hasText: raw.cells.length > 0,
+    ocrAttempted: raw.ocrAttempted ?? false,
+    ocrProblem: raw.ocrProblem ?? null,
     hasTable: false,
     title: null,
     documentNumber: null,

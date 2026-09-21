@@ -95,6 +95,33 @@ describe('a scanned page, with OCR switched on', () => {
   }, 120000);
 });
 
+describe('the refusal on a page we could not read', () => {
+  test('says OCR is not switched on, when it is not', async () => {
+    const result = await extract(bytes('KBS-DR118.pdf'), 'KBS-DR118.pdf');
+    const refusal = result.refusals.find((r) => r.code === 'NO_TEXT_LAYER')!;
+
+    // "This page is a scan" is true but is not a reason anyone can act on.
+    expect(refusal.humanMessage).toMatch(/OCR, which is not switched on/i);
+  });
+
+  test('says OCR was tried, when it was', async () => {
+    // A rasterizer that always fails, so OCR is attempted and reports why.
+    const result = await extract(bytes('KBS-DR118.pdf'), 'KBS-DR118.pdf', {
+      ocr: async () => {
+        throw new Error('the engine fell over');
+      },
+    });
+    const refusal = result.refusals.find((r) => r.code === 'NO_TEXT_LAYER')!;
+
+    expect(refusal.humanMessage).toMatch(/did try to read it from the image/i);
+    expect(refusal.humanMessage).toContain('the engine fell over');
+    expect(refusal.humanMessage).not.toMatch(/not switched on/i);
+
+    // And the failure stays contained to that page.
+    expect(result.lineItems).toHaveLength(21);
+  }, 60000);
+});
+
 describe('a figure OCR was unsure about', () => {
   const traced = (value: number, confidence: number) => ({
     value,
