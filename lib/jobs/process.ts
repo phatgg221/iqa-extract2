@@ -220,6 +220,10 @@ async function runWithBroadcast(
       result,
       page_count: result.pageCount,
       pages_done: result.pageCount,
+      // Stored so the history list can show "24 items, 3 refusals" without
+      // loading a result that may be megabytes.
+      line_item_count: result.lineItems.length,
+      refusal_count: result.refusals.length,
       finished_at: new Date().toISOString(),
     })
     .eq('id', job.id);

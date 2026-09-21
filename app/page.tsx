@@ -1,13 +1,15 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ExtractionResult } from '@/lib/extract/types';
-import { JobError, submitDocument } from '@/lib/jobs/client';
+import { JobError, fetchHistory, loadJob, submitDocument } from '@/lib/jobs/client';
+import type { JobSummary } from '@/lib/jobs/types';
+import { JobHistory } from './components/JobHistory';
 import { ResultView } from './components/ResultView';
 
 /**
  * The upload no longer goes through our API — the browser PUTs the file
- * straight into storage and a worker reads it — so the page now tracks a job
+ * straight into storage and a consumer reads it — so the page tracks a job
  * rather than a request. `stage` is what the user is told is happening; it
  * exists because a long wait with no explanation is its own kind of generic
  * error.
@@ -24,6 +26,17 @@ type State =
   | { status: 'done'; result: ExtractionResult }
   | { status: 'failed'; fileName: string; reason: string };
 
+/**
+ * A history that is quietly empty looks exactly like one that failed to load,
+ * so the reason is shown rather than swallowed.
+ */
+function historyErrorMessage(err: unknown): string {
+  return err instanceof JobError
+    ? err.humanMessage
+    : `The list of previous uploads could not be loaded. ` +
+        `${err instanceof Error ? err.message : String(err)}`;
+}
+
 /** Shipped in `public/samples` so the behaviour can be seen without hunting for files. */
 const SAMPLES = [
   { file: 'KBS-10234.pdf', note: 'clean' },
@@ -31,12 +44,50 @@ const SAMPLES = [
   { file: 'KBS-10255.pdf', note: 'no line totals' },
   { file: 'KBS-10262.pdf', note: 'contradicts itself' },
   { file: 'KBS-10270.pdf', note: 'total mismatch' },
-  { file: 'KBS-DR118.pdf', note: '8 pages, one unreadable' },
+  { file: 'KBS-DR118.pdf', note: '8 pages, one scanned' },
 ];
 
 export default function Home() {
   const [state, setState] = useState<State>({ status: 'idle' });
+  const [history, setHistory] = useState<JobSummary[]>([]);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [openingJobId, setOpeningJobId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  /** Called from event handlers, after an upload finishes or on demand. */
+  const refreshHistory = useCallback(async () => {
+    try {
+      const jobs = await fetchHistory();
+      setHistory(jobs);
+      setHistoryError(null);
+    } catch (err) {
+      setHistoryError(historyErrorMessage(err));
+    }
+  }, []);
+
+  // Written inline rather than calling refreshHistory, so the await is visible
+  // to the lint rule that guards against setting state synchronously in an
+  // effect. `alive` stops a slow response updating a page that has gone.
+  useEffect(() => {
+    let alive = true;
+
+    void (async () => {
+      try {
+        const jobs = await fetchHistory();
+        if (alive) {
+          setHistory(jobs);
+          setHistoryError(null);
+        }
+      } catch (err) {
+        if (alive) setHistoryError(historyErrorMessage(err));
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   async function upload(file: File) {
     const working = (stage: string, pagesDone = 0, pageCount: number | null = null) =>
@@ -46,7 +97,11 @@ export default function Home() {
 
     try {
       const final = await submitDocument(file, {
-        onUploaded: () => working('Uploaded — waiting to be read'),
+        onJobCreated: (jobId) => setActiveJobId(jobId),
+        onUploaded: () => {
+          working('Uploaded — waiting to be read');
+          void refreshHistory();
+        },
         onProgress: (status) => {
           if (status.status === 'queued') {
             working('Queued — waiting to be read');
@@ -62,7 +117,9 @@ export default function Home() {
         },
       });
 
-      // A job that failed still carries a real reason, written by the worker
+      void refreshHistory();
+
+      // A job that failed still carries a real reason, written by the consumer
       // and passed through untouched. A job that succeeded may be nothing but
       // refusals, and that is a result, not a failure.
       if (final.status === 'failed') {
@@ -90,6 +147,7 @@ export default function Home() {
 
       setState({ status: 'done', result: final.result });
     } catch (err) {
+      void refreshHistory();
       setState({
         status: 'failed',
         fileName: file.name,
@@ -125,6 +183,40 @@ export default function Home() {
     }
   }
 
+  /** Re-opens a finished job from the history without reading the document again. */
+  async function openJob(job: JobSummary) {
+    setOpeningJobId(job.jobId);
+    try {
+      const status = await loadJob(job.jobId);
+      setActiveJobId(job.jobId);
+
+      if (status.result) {
+        setState({ status: 'done', result: status.result });
+      } else {
+        setState({
+          status: 'failed',
+          fileName: job.fileName,
+          reason:
+            status.failure?.humanMessage ??
+            'This job has no stored result, which should not be possible for one ' +
+              'that finished. Please upload the document again.',
+        });
+      }
+    } catch (err) {
+      setState({
+        status: 'failed',
+        fileName: job.fileName,
+        reason:
+          err instanceof JobError
+            ? err.humanMessage
+            : `That result could not be reopened. ` +
+              `${err instanceof Error ? err.message : String(err)}`,
+      });
+    } finally {
+      setOpeningJobId(null);
+    }
+  }
+
   const busy = state.status === 'working';
 
   return (
@@ -156,6 +248,7 @@ export default function Home() {
             type="button"
             onClick={() => {
               setState({ status: 'idle' });
+              setActiveJobId(null);
               if (inputRef.current) inputRef.current.value = '';
             }}
             className="cursor-pointer rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
@@ -165,25 +258,49 @@ export default function Home() {
         )}
       </div>
 
-      <div className="mb-8">
-        <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">
-          Or try a sample document
-        </p>
-        <div className="flex flex-wrap gap-2">
+      <section className="mb-8">
+        <div className="mb-2 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+          <h2 className="text-xs font-medium uppercase tracking-wide text-slate-500">
+            Previous uploads
+          </h2>
+          <button
+            type="button"
+            onClick={() => void refreshHistory()}
+            className="cursor-pointer text-xs font-medium text-sky-700 underline underline-offset-2 hover:text-sky-900"
+          >
+            Refresh
+          </button>
+        </div>
+
+        <JobHistory
+          jobs={history}
+          activeJobId={activeJobId}
+          loadingJobId={openingJobId}
+          error={historyError}
+          onOpen={(job) => void openJob(job)}
+        />
+
+        {/*
+          Kept alongside the history rather than replaced by it: on a fresh
+          database there is nothing to list, and the samples are the quickest
+          way to see what the service does with an awkward document.
+        */}
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <span className="text-xs text-slate-500">Or try a sample:</span>
           {SAMPLES.map((sample) => (
             <button
               key={sample.file}
               type="button"
               disabled={busy}
               onClick={() => void uploadSample(sample.file)}
-              className="cursor-pointer rounded-md border border-slate-300 px-2.5 py-1.5 text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              className="cursor-pointer rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-50"
             >
               <span className="font-medium">{sample.file.replace('.pdf', '')}</span>
               <span className="ml-1.5 text-slate-500">{sample.note}</span>
             </button>
           ))}
         </div>
-      </div>
+      </section>
 
       {busy && (
         <div
@@ -219,10 +336,7 @@ export default function Home() {
         avoid: a refusal that never reaches the person reading the screen.
       */}
       {state.status === 'failed' && (
-        <div
-          role="alert"
-          className="rounded-lg border border-red-300 bg-red-50 px-4 py-3"
-        >
+        <div role="alert" className="rounded-lg border border-red-300 bg-red-50 px-4 py-3">
           <h2 className="text-sm font-semibold text-red-900">
             {state.fileName} could not be read
           </h2>

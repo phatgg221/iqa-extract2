@@ -49,6 +49,12 @@ and run **both** migrations, in order:
 3. [`0003_reap_unclaimed_jobs.sql`](../supabase/migrations/0003_reap_unclaimed_jobs.sql) —
    also reaps jobs stuck in `queued` that nothing ever picked up, not just ones
    that died mid-read.
+4. [`0004_job_summary_counts.sql`](../supabase/migrations/0004_job_summary_counts.sql) —
+   `line_item_count` and `refusal_count`, so the upload history can show an
+   outcome per row without loading every result.
+
+Until 4 is applied the history still works; rows simply show no counts, because
+an unrecorded count is reported as unknown rather than as zero.
 
 Or, from the account that owns the project:
 

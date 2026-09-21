@@ -13,6 +13,7 @@ import {
   type CreatedJob,
   type JobSignal,
   type JobStatusResponse,
+  type JobSummary,
 } from './types';
 
 /**
@@ -99,6 +100,19 @@ async function fetchStatus(jobId: string): Promise<JobStatusResponse> {
   const response = await fetch(`/api/jobs/${jobId}`, { cache: 'no-store' });
   if (!response.ok) throw await reasonFor(response, 'Checking progress');
   return response.json();
+}
+
+/** The upload history. Summaries only — opening one fetches it in full. */
+export async function fetchHistory(): Promise<JobSummary[]> {
+  const response = await fetch('/api/jobs', { cache: 'no-store' });
+  if (!response.ok) throw await reasonFor(response, 'Listing previous uploads');
+  const body = await response.json();
+  return Array.isArray(body?.jobs) ? body.jobs : [];
+}
+
+/** Re-opens a finished job, result and all. */
+export async function loadJob(jobId: string): Promise<JobStatusResponse> {
+  return fetchStatus(jobId);
 }
 
 export interface SubmitCallbacks {

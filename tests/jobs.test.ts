@@ -24,6 +24,8 @@ const row = (over: Partial<JobRow> = {}): JobRow => ({
   failure_code: null,
   failure_message: null,
   attempts: 1,
+  line_item_count: 4,
+  refusal_count: 3,
   created_at: '2026-09-21T00:00:00Z',
   uploaded_at: null,
   started_at: null,

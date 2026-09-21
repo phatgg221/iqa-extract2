@@ -38,10 +38,43 @@ export interface JobRow {
   failure_code: string | null;
   failure_message: string | null;
   attempts: number;
+  /** Written alongside the result, so the history list need not load it. */
+  line_item_count: number | null;
+  refusal_count: number | null;
   created_at: string;
   uploaded_at: string | null;
   started_at: string | null;
   finished_at: string | null;
+}
+
+/** One row in the upload history. Deliberately without the result blob. */
+export interface JobSummary {
+  jobId: string;
+  fileName: string;
+  status: JobStatus;
+  pageCount: number | null;
+  lineItemCount: number | null;
+  refusalCount: number | null;
+  /** Present only for a failed job, and always a real explanation. */
+  failureMessage: string | null;
+  createdAt: string;
+  finishedAt: string | null;
+}
+
+export function toSummary(row: JobRow): JobSummary {
+  return {
+    jobId: row.id,
+    fileName: row.file_name,
+    status: row.status,
+    pageCount: row.page_count,
+    // Coerced because these columns may not exist yet (migration 0004), in
+    // which case PostgREST simply omits them and they arrive undefined.
+    lineItemCount: row.line_item_count ?? null,
+    refusalCount: row.refusal_count ?? null,
+    failureMessage: row.status === 'failed' ? row.failure_message : null,
+    createdAt: row.created_at,
+    finishedAt: row.finished_at,
+  };
 }
 
 /** What `POST /api/jobs` returns: everything the browser needs to upload. */

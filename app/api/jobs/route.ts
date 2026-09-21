@@ -9,12 +9,68 @@
  */
 
 import { admin, BUCKET, MissingConfigError } from '@/lib/supabase/admin';
-import type { CreatedJob, JobRow } from '@/lib/jobs/types';
+import { toSummary, type CreatedJob, type JobRow } from '@/lib/jobs/types';
 
 export const runtime = 'nodejs';
 
 /** Generous, because the file no longer travels through a function. */
 const MAX_BYTES = 200 * 1024 * 1024;
+
+/** How many past uploads the history shows. */
+const HISTORY_LIMIT = 20;
+
+/**
+ * GET /api/jobs — the upload history.
+ *
+ * Returns summaries, never results: `result` holds a whole ExtractionResult,
+ * which for a long document is megabytes, and twenty of those is not a list.
+ * Opening a row fetches that one job in full.
+ *
+ * Note there is no auth on this service, so this lists every job rather than
+ * one person's. That was already true of reading a job by id; listing just
+ * makes it easier to find them. It needs an owner column before this is
+ * exposed to more than one person.
+ */
+export async function GET() {
+  try {
+    const { data, error } = await admin()
+      .from('extraction_jobs')
+      .select()
+      .neq('status', 'awaiting_upload') // uploads that never arrived
+      .order('created_at', { ascending: false })
+      .limit(HISTORY_LIMIT)
+      .returns<JobRow[]>();
+
+    if (error) {
+      // The likeliest cause by far, and one the raw message does not explain.
+      const missingColumn = /line_item_count|refusal_count/.test(error.message);
+      return fail(
+        500,
+        missingColumn ? 'MIGRATION_MISSING' : 'HISTORY_UNAVAILABLE',
+        missingColumn
+          ? `The upload history needs database migration 0004, which has not been ` +
+            `run yet. Apply supabase/migrations/0004_job_summary_counts.sql and ` +
+            `reload. The database reported: ${error.message}`
+          : `The upload history could not be read: ${error.message}`,
+      );
+    }
+
+    return Response.json(
+      { jobs: (data ?? []).map(toSummary) },
+      { status: 200, headers: { 'Cache-Control': 'no-store' } },
+    );
+  } catch (err) {
+    if (err instanceof MissingConfigError) {
+      return fail(500, 'NOT_CONFIGURED', err.message);
+    }
+    return fail(
+      500,
+      'UNEXPECTED',
+      `Reading the upload history failed unexpectedly: ` +
+        `${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
 
 interface CreateJobBody {
   fileName?: unknown;
