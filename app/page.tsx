@@ -46,10 +46,10 @@ export default function Home() {
 
     try {
       const final = await submitDocument(file, {
-        onUploaded: () => working('Uploaded. Waiting for a worker to pick it up'),
+        onUploaded: () => working('Uploaded — waiting to be read'),
         onProgress: (status) => {
           if (status.status === 'queued') {
-            working('Queued, waiting for a worker');
+            working('Queued — waiting to be read');
           } else if (status.status === 'processing') {
             working(
               status.pageCount
