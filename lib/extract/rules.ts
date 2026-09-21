@@ -176,7 +176,10 @@ export function lineArithmeticRefusals(items: LineItem[]): Refusal[] {
   for (const item of items) {
     if (!item.quantity || !item.unitPrice || !item.lineTotal) continue;
 
-    const expected = Math.round(item.quantity.value * toCents(item.unitPrice.value));
+    // Multiply before converting to cents. Rounding the unit price first would
+    // turn a sub-cent price like $0.335 into a discrepancy the size of the
+    // quantity, and report a mismatch that is ours rather than the document's.
+    const expected = Math.round(item.quantity.value * item.unitPrice.value * 100);
     const printed = toCents(item.lineTotal.value);
     if (Math.abs(expected - printed) <= 1) continue;
 

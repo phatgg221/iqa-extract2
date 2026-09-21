@@ -13,7 +13,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { extract } from '@/lib/extract/extract';
 import { readPages } from '@/lib/extract/pdf';
-import type { ExtractionResult, Refusal } from '@/lib/extract/types';
+import { lineArithmeticRefusals } from '@/lib/extract/rules';
+import type { ExtractionResult, LineItem, Refusal } from '@/lib/extract/types';
 
 const SAMPLES = path.resolve(__dirname, '../samples');
 
@@ -189,6 +190,59 @@ describe('a clean document', () => {
     expect(result.lineItems).toHaveLength(5);
     expect(result.documentTotal?.value).toBe(2630);
     expect(result.documentNumber?.value).toBe('KBS-10234');
+  });
+});
+
+/**
+ * None of the sample documents contains a line whose own arithmetic is wrong,
+ * so this rule is exercised directly rather than through a fixture. Written
+ * against hand-built line items to keep the case explicit.
+ */
+describe('a line that does not add up', () => {
+  const line = (over: Partial<LineItem> = {}): LineItem => ({
+    page: 2,
+    lineNumber: 3,
+    description: { value: 'Timber H3.2 90x45', evidence: { page: 2, sourceText: 'Timber H3.2 90x45' } },
+    quantity: { value: 10, evidence: { page: 2, sourceText: '10' } },
+    unit: { value: 'length', evidence: { page: 2, sourceText: 'length' } },
+    unitPrice: { value: 18.4, evidence: { page: 2, sourceText: '$18.40' } },
+    lineTotal: { value: 184, evidence: { page: 2, sourceText: '$184.00' } },
+    ...over,
+  });
+
+  test('is flagged, quoting all three figures, with neither corrected', () => {
+    const wrong = line({
+      lineTotal: { value: 999, evidence: { page: 2, sourceText: '$999.00' } },
+    });
+
+    const [refusal] = lineArithmeticRefusals([wrong]);
+    expect(refusal.code).toBe('LINE_ARITHMETIC_MISMATCH');
+    expect(refusal.page).toBe(2);
+    expect(refusal.lineNumber).toBe(3);
+    expect(refusal.humanMessage).toContain('$184.00');
+    expect(refusal.humanMessage).toContain('$999.00');
+    expect(refusal.evidence.map((e) => e.sourceText)).toEqual(['10', '$18.40', '$999.00']);
+
+    // The printed value is left exactly as it was read.
+    expect(wrong.lineTotal!.value).toBe(999);
+  });
+
+  test('accepts a line that is correct', () => {
+    expect(lineArithmeticRefusals([line()])).toEqual([]);
+  });
+
+  test('tolerates a rounding difference of one cent', () => {
+    const rounded = line({
+      quantity: { value: 3, evidence: { page: 2, sourceText: '3' } },
+      unitPrice: { value: 0.335, evidence: { page: 2, sourceText: '$0.335' } },
+      lineTotal: { value: 1.0, evidence: { page: 2, sourceText: '$1.00' } },
+    });
+    expect(lineArithmeticRefusals([rounded])).toEqual([]);
+  });
+
+  test('says nothing when a figure needed for the check is missing', () => {
+    expect(lineArithmeticRefusals([line({ lineTotal: null })])).toEqual([]);
+    expect(lineArithmeticRefusals([line({ unitPrice: null })])).toEqual([]);
   });
 });
 
