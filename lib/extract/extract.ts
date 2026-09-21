@@ -124,6 +124,7 @@ function parseOnePage(raw: RawPage, refusals: Refusal[]): ParsedPage {
       documentNumber: null,
       documentDate: null,
       columns: [],
+      headerCells: [],
       rows: [],
       statedTotal: null,
       totalRowWithoutAmount: null,

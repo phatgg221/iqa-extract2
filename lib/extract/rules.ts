@@ -87,7 +87,7 @@ export function pageLevelRefusals(parsed: ParsedPage): Refusal[] {
           `Quantities and unit prices are shown below as printed, but the line ` +
           `totals have been left blank rather than multiplied out, because a ` +
           `calculated figure is not what the document says.`,
-        evidence: [ev(page, parsed.columns.map((c) => c.key).join(', '))],
+        evidence: parsed.headerCells.map((c) => ev(page, c.text)),
       }),
     );
   }

@@ -55,6 +55,8 @@ export interface ParsedPage {
   documentNumber: { cell: TextCell; value: string } | null;
   documentDate: { cell: TextCell; value: string } | null;
   columns: Column[];
+  /** The header row's cells, kept so refusals about columns can quote the page. */
+  headerCells: TextCell[];
   rows: ParsedRow[];
   /** The totals row's amount cell, when the page prints a total. */
   statedTotal: { cell: TextCell; value: number } | null;
@@ -116,6 +118,7 @@ export function parsePage(raw: RawPage): ParsedPage {
     documentNumber: null,
     documentDate: null,
     columns: [],
+    headerCells: [],
     rows: [],
     statedTotal: null,
     totalRowWithoutAmount: null,
@@ -149,6 +152,7 @@ export function parsePage(raw: RawPage): ParsedPage {
 
   base.hasTable = true;
   base.columns = buildColumns(header.row);
+  base.headerCells = header.row.cells;
 
   const body = rows.slice(header.index + 1);
   const consumed = new Set<Row>();
