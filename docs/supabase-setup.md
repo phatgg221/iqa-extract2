@@ -228,6 +228,40 @@ dependency, so a route handler and a worker can both import it.
 
 ---
 
+## Deploying
+
+One gotcha that only shows up in production. `serverExternalPackages`
+tells Vercel to trace `pdfjs-dist` from `node_modules` rather than bundle it,
+but tracing follows *static* imports — and pdfjs pulls in its worker through a
+**dynamic** import when it sets up the fake worker in Node. The tracer never
+sees it, so the deployed function is missing the file and every upload fails
+with:
+
+```
+Setting up fake worker failed: "Cannot find module
+'/var/task/node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs'"
+```
+
+It works perfectly locally, because `node_modules` is right there on disk.
+
+The fix is in [`next.config.ts`](../next.config.ts):
+
+```ts
+outputFileTracingIncludes: {
+  "/api/**": ["./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs"],
+},
+```
+
+To confirm it before deploying, build and check the trace manifests:
+
+```bash
+npx next build
+grep -l pdf.worker.mjs .next/server/app/api/**/*.nft.json
+```
+
+Every API route that reads a PDF should be listed. Nothing listed means the
+worker will be missing in production.
+
 ## Still not done
 
 - **Not run against a live project or a live queue.** Likeliest first snags:
