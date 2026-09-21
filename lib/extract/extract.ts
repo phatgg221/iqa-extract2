@@ -272,10 +272,9 @@ function duplicatePageRefusals(pages: PageResult[]): Refusal[] {
         `separate deliveries. Every page is listed below as printed, but they have not ` +
         `been added together, because doing so would multiply the value of this ` +
         `document if they are restatements.`,
-      evidence: group.flatMap((p) => [
-        ...(p.title ? [p.title.evidence] : []),
-        ...p.lineItems.slice(0, 1).map((i) => i.description.evidence),
-      ]),
+      evidence: group.flatMap((p) =>
+        p.title ? [p.title.evidence] : [p.lineItems[0].description.evidence],
+      ),
     });
   }
   return out;
@@ -377,9 +376,11 @@ function decideDocumentTotal(
     humanMessage:
       `No overall total is being reported for this document. ` +
       `${reasons.length ? `${capitalise(reasons.join('; '))}. ` : ''}` +
-      `Adding the pages up would produce a number that does not appear anywhere ` +
-      `on the document, so the line items are listed per page instead for you ` +
-      `to total yourself.`,
+      (lineItems.length > 0
+        ? `Adding the pages up would produce a number that does not appear anywhere ` +
+          `on the document, so the line items are listed per page instead for you ` +
+          `to total yourself.`
+        : `No line items could be read from it either, so there is nothing to add up.`),
     evidence,
   });
 
