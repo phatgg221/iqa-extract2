@@ -1,0 +1,10 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "app/api/queues/extract/route.ts": {
+      "experimentalTriggers": [
+        { "type": "queue/v2beta", "topic": "document-extractions" }
+      ]
+    }
+  }
+}

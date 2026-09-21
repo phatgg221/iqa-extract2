@@ -1,138 +1,29 @@
 /**
- * The extraction worker.
+ * Local / self-hosted worker.
  *
- * Claims one job at a time with `for update skip locked`, downloads the PDF
- * from the bucket, and runs the same `extract()` the synchronous route used
- * to call. Nothing in `lib/extract` changed to make this work — it is plain
- * TypeScript whose only dependency is pdfjs, so the tested behaviour carries
- * over exactly.
+ * On Vercel, the consumer is `app/api/queues/extract/route.ts` and Vercel
+ * pushes work to it. This polling worker is the fallback for everywhere else:
+ * local development without `vercel dev`, or a deployment that is not on
+ * Vercel at all. Both call the same `runClaimedJob`, so they cannot drift.
+ *
+ * It claims with `for update skip locked`, so running it alongside the queue
+ * consumer is safe — whichever gets there first wins, and the other finds
+ * nothing to do.
  *
  * Run it with `npm run worker`.
- *
- * The distinction this file exists to preserve:
- *
- *   succeeded = we read the document. Its result may be nothing but refusals.
- *   failed    = we never got to look at the document at all.
- *
- * Collapsing those two is how "page 4 is a scan we cannot read" becomes
- * "job failed", which is the exact failure the whole project is about.
  */
 
-import { admin, BUCKET } from '@/lib/supabase/admin';
-import { extract, UnreadablePdfError } from '@/lib/extract/extract';
+import { admin } from '@/lib/supabase/admin';
+import { runClaimedJob } from '@/lib/jobs/process';
 import type { JobRow } from '@/lib/jobs/types';
 
 const IDLE_POLL_MS = 2000;
 const STALL_TIMEOUT = '10 minutes';
 
-/** Progress is only written when the number changes, to avoid a write per page. */
-function throttleProgress(jobId: string) {
-  let lastWritten = -1;
-
-  return async (pagesDone: number, pageCount: number) => {
-    if (pagesDone === lastWritten) return;
-    lastWritten = pagesDone;
-
-    const { error } = await admin()
-      .from('extraction_jobs')
-      .update({ pages_done: pagesDone, page_count: pageCount })
-      .eq('id', jobId);
-
-    // A failed progress write must not abort a job that is otherwise fine.
-    if (error) console.warn(`[${jobId}] progress update failed: ${error.message}`);
-  };
-}
-
-async function claim(): Promise<JobRow | null> {
+async function claimNext(): Promise<JobRow | null> {
   const { data, error } = await admin().rpc('claim_extraction_job');
   if (error) throw new Error(`could not claim a job: ${error.message}`);
-  // The function returns a composite row, or nothing when the queue is empty.
   return (data as JobRow | null) ?? null;
-}
-
-async function markFailed(job: JobRow, code: string, humanMessage: string) {
-  await admin()
-    .from('extraction_jobs')
-    .update({
-      status: 'failed',
-      failure_code: code,
-      failure_message: humanMessage,
-      finished_at: new Date().toISOString(),
-    })
-    .eq('id', job.id);
-
-  console.error(`[${job.id}] failed (${code}): ${humanMessage}`);
-}
-
-async function runJob(job: JobRow) {
-  console.log(`[${job.id}] claimed ${job.file_name} (${job.byte_size} bytes)`);
-
-  const { data: blob, error: downloadError } = await admin()
-    .storage.from(BUCKET)
-    .download(job.object_key);
-
-  if (downloadError || !blob) {
-    await markFailed(
-      job,
-      'DOWNLOAD_FAILED',
-      `${job.file_name} could not be fetched from storage, so it was never read. ` +
-        `Storage reported: ${downloadError?.message ?? 'no file was returned'}.`,
-    );
-    return;
-  }
-
-  const bytes = new Uint8Array(await blob.arrayBuffer());
-
-  let result;
-  try {
-    result = await extract(bytes, job.file_name, { onPage: throttleProgress(job.id) });
-  } catch (err) {
-    if (err instanceof UnreadablePdfError) {
-      await markFailed(
-        job,
-        'PDF_UNREADABLE',
-        `${job.file_name} could not be opened. The PDF library reported: ` +
-          `${err.message.replace(/\.$/, '')}. The file may be encrypted, ` +
-          `password-protected or corrupt.`,
-      );
-      return;
-    }
-    await markFailed(
-      job,
-      'UNEXPECTED',
-      `Reading ${job.file_name} failed unexpectedly: ` +
-        `${err instanceof Error ? err.message : String(err)}`,
-    );
-    return;
-  }
-
-  // Reached here means we read the document. Refusals inside it are the
-  // result, not a failure, so the job succeeds either way.
-  const { error: saveError } = await admin()
-    .from('extraction_jobs')
-    .update({
-      status: 'succeeded',
-      result,
-      page_count: result.pageCount,
-      pages_done: result.pageCount,
-      finished_at: new Date().toISOString(),
-    })
-    .eq('id', job.id);
-
-  if (saveError) {
-    await markFailed(
-      job,
-      'RESULT_NOT_SAVED',
-      `${job.file_name} was read successfully, but the result could not be stored: ` +
-        `${saveError.message}. Please upload it again.`,
-    );
-    return;
-  }
-
-  console.log(
-    `[${job.id}] succeeded — ${result.lineItems.length} line items, ` +
-      `${result.refusals.length} refusals across ${result.pageCount} pages`,
-  );
 }
 
 async function reapStalled() {
@@ -143,12 +34,13 @@ async function reapStalled() {
     console.warn(`stalled-job sweep failed: ${error.message}`);
     return;
   }
-  const reaped = (data as JobRow[] | null) ?? [];
-  for (const job of reaped) console.warn(`[${job.id}] reaped as stalled`);
+  for (const job of (data as JobRow[] | null) ?? []) {
+    console.warn(`[${job.id}] reaped as stalled`);
+  }
 }
 
 async function main() {
-  console.log(`worker started — polling for jobs every ${IDLE_POLL_MS}ms`);
+  console.log(`worker started — polling every ${IDLE_POLL_MS}ms`);
 
   let running = true;
   for (const signal of ['SIGINT', 'SIGTERM'] as const) {
@@ -160,7 +52,7 @@ async function main() {
 
   while (running) {
     try {
-      const job = await claim();
+      const job = await claimNext();
 
       if (!job) {
         await reapStalled();
@@ -168,9 +60,9 @@ async function main() {
         continue;
       }
 
-      await runJob(job);
+      await runClaimedJob(job);
     } catch (err) {
-      // The loop itself must survive anything, or one bad job stops the queue.
+      // The loop must survive anything, or one bad job stops the queue.
       console.error(
         `worker loop error: ${err instanceof Error ? err.message : String(err)}`,
       );

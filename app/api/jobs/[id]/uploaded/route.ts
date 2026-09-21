@@ -7,7 +7,9 @@
  * confusing failure several steps later.
  */
 
+import { send } from '@vercel/queue';
 import { admin, BUCKET, MissingConfigError } from '@/lib/supabase/admin';
+import { EXTRACTION_TOPIC } from '@/lib/jobs/process';
 import type { JobRow } from '@/lib/jobs/types';
 
 export const runtime = 'nodejs';
@@ -82,7 +84,29 @@ export async function POST(
       );
     }
 
-    return Response.json({ jobId: job.id, status: 'queued' }, { status: 200 });
+    // The row is already 'queued', so the job is safe whatever happens next:
+    // the polling worker can pick it up even if the queue is unreachable.
+    // Publishing is therefore best-effort, and a failure is reported rather
+    // than hidden — but it does not fail the upload.
+    let enqueued = false;
+    let enqueueProblem: string | null = null;
+
+    try {
+      await send(EXTRACTION_TOPIC, { jobId: job.id });
+      enqueued = true;
+    } catch (err) {
+      enqueueProblem =
+        err instanceof Error ? err.message : String(err);
+      console.warn(
+        `[${job.id}] could not publish to "${EXTRACTION_TOPIC}": ${enqueueProblem}. ` +
+          `The job is queued in the database and a polling worker can still take it.`,
+      );
+    }
+
+    return Response.json(
+      { jobId: job.id, status: 'queued', enqueued, enqueueProblem },
+      { status: 200 },
+    );
   } catch (err) {
     if (err instanceof MissingConfigError) {
       return fail(500, 'NOT_CONFIGURED', err.message);
