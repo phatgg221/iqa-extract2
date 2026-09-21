@@ -257,6 +257,32 @@ Enabling it on the serverless consumer would need a build of tesseract that
 does not depend on worker threads, plus the language data bundled into the
 function — otherwise every cold start re-downloads roughly 15 MB.
 
+## What production does and does not do
+
+Environment variables must be set in the Vercel dashboard — `.env.local` is
+local only. The four needed are `NEXT_PUBLIC_SUPABASE_URL`,
+`NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY` and
+`SUPABASE_BUCKET`.
+
+| | Local (`npm run worker`) | Production (Vercel) |
+|---|---|---|
+| Reads text-layer PDFs | yes | yes |
+| Reads scanned pages | yes, via OCR | **no** — refused, and the refusal says OCR is not switched on |
+| Picks jobs up | polling worker | Vercel Queues push consumer |
+| Sweeps stalled jobs | worker loop | on status poll, once a job is past the timeout |
+
+**OCR does not run in production**, and that is a constraint rather than a
+setting: tesseract's worker thread never starts inside a Next.js route handler.
+Scans are refused there exactly as they were before OCR existed. Making it work
+would need a worker-thread-free build of tesseract with its language data
+bundled into the function, or a hosted OCR API called over HTTP.
+
+**Vercel Queues has to be enabled for the team.** If it is not, `send()` fails,
+the job stays `queued`, and nothing on Vercel will ever pick it up — the status
+poll will eventually reap it into `failed` with a reason rather than leaving
+the page spinning, but no document will be read. There is no worker on Vercel
+to fall back to.
+
 ## Deploying
 
 One gotcha that only shows up in production. `serverExternalPackages`
