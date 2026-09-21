@@ -1,5 +1,6 @@
 import type { ExtractionResult } from '@/lib/extract/types';
 import { money } from '@/lib/labels';
+import { CopyJson } from './CopyJson';
 import { EvidenceQuote } from './Evidence';
 import { PageItems } from './LineItems';
 import { RefusalList } from './RefusalList';
@@ -63,16 +64,19 @@ export function ResultView({ result }: { result: ExtractionResult }) {
   return (
     <div className="space-y-6">
       <section className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
-        <dl className="flex flex-wrap gap-x-10 gap-y-3">
-          <Meta label="File" value={result.fileName} />
-          <Meta label="Document no." value={result.documentNumber?.value ?? 'not printed'} />
-          <Meta label="Date" value={result.documentDate?.value ?? 'not printed'} />
-          <Meta
-            label="Pages read"
-            value={`${readablePages} of ${result.pageCount}`}
-          />
-          <Meta label="Line items" value={String(result.lineItems.length)} />
-        </dl>
+        <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
+          <dl className="flex flex-wrap gap-x-10 gap-y-3">
+            <Meta label="File" value={result.fileName} />
+            <Meta label="Document no." value={result.documentNumber?.value ?? 'not printed'} />
+            <Meta label="Date" value={result.documentDate?.value ?? 'not printed'} />
+            <Meta
+              label="Pages read"
+              value={`${readablePages} of ${result.pageCount}`}
+            />
+            <Meta label="Line items" value={String(result.lineItems.length)} />
+          </dl>
+          <CopyJson result={result} />
+        </div>
       </section>
 
       <DocumentTotal result={result} />

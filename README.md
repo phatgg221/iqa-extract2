@@ -77,6 +77,10 @@ opened gets an error status, and the body still carries a real reason.
 Every refusal's `humanMessage` is written where the problem is found, because
 that is the only place the context still exists. The UI renders it verbatim.
 
+The result header has **Copy JSON** and **Download**, which hand back the API
+response exactly as it was returned — refusals included — so what is on screen
+can be checked against what was actually sent.
+
 ---
 
 ## The three questions
