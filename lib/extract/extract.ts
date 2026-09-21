@@ -13,7 +13,7 @@
  *    most wants, which is exactly the thing not to do.
  */
 
-import { readPages, UnreadablePdfError, type RawPage } from './pdf';
+import { readPages, UnreadablePdfError, type RawPage, type ReadOptions } from './pdf';
 import { parsePage, readRow, type ParsedPage } from './table';
 import {
   classifyPage,
@@ -29,8 +29,9 @@ export { UnreadablePdfError };
 export async function extract(
   bytes: Uint8Array,
   fileName: string,
+  options: ReadOptions = {},
 ): Promise<ExtractionResult> {
-  const rawPages = await readPages(bytes);
+  const rawPages = await readPages(bytes, options);
 
   const parsedPages: ParsedPage[] = [];
   const refusals: Refusal[] = [];

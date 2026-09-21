@@ -32,7 +32,19 @@ export class UnreadablePdfError extends Error {
   }
 }
 
-export async function readPages(bytes: Uint8Array): Promise<RawPage[]> {
+export interface ReadOptions {
+  /**
+   * Called after each page is read. Reading the pages is the slow part of a
+   * large document, so this is where progress has to come from if it is going
+   * to mean anything.
+   */
+  onPage?: (pagesDone: number, pageCount: number) => void | Promise<void>;
+}
+
+export async function readPages(
+  bytes: Uint8Array,
+  options: ReadOptions = {},
+): Promise<RawPage[]> {
   let pdf;
   try {
     pdf = await getDocument({
@@ -70,6 +82,10 @@ export async function readPages(bytes: Uint8Array): Promise<RawPage[]> {
     } catch {
       pages.push({ page: n, cells: [] });
     }
+
+    // Reported outside the try/catch so a refused page still counts as read.
+    // Progress that stalls on the one page you cannot parse is worse than none.
+    await options.onPage?.(n, pdf.numPages);
   }
 
   return pages;

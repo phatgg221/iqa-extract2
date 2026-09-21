@@ -2,38 +2,27 @@
 
 import { useRef, useState } from 'react';
 import type { ExtractionResult } from '@/lib/extract/types';
+import { JobError, submitDocument } from '@/lib/jobs/client';
 import { ResultView } from './components/ResultView';
 
+/**
+ * The upload no longer goes through our API — the browser PUTs the file
+ * straight into storage and a worker reads it — so the page now tracks a job
+ * rather than a request. `stage` is what the user is told is happening; it
+ * exists because a long wait with no explanation is its own kind of generic
+ * error.
+ */
 type State =
   | { status: 'idle' }
-  | { status: 'reading'; fileName: string }
+  | {
+      status: 'working';
+      fileName: string;
+      stage: string;
+      pagesDone: number;
+      pageCount: number | null;
+    }
   | { status: 'done'; result: ExtractionResult }
   | { status: 'failed'; fileName: string; reason: string };
-
-/**
- * Turns a failed response into the real reason it failed.
- *
- * Everything here works to keep a specific explanation on screen. The API
- * sends a `humanMessage` for every error it knows about; when something
- * unforeseen happens we still report the status and the actual exception
- * rather than falling back to "something went wrong", because the whole
- * point of this page is that the true reason survives the trip.
- */
-async function reasonFor(response: Response): Promise<string> {
-  try {
-    const body = await response.json();
-    if (typeof body?.error?.humanMessage === 'string') return body.error.humanMessage;
-    return (
-      `The server responded with ${response.status} ${response.statusText} but did ` +
-      `not explain why. The raw response was: ${JSON.stringify(body).slice(0, 300)}`
-    );
-  } catch {
-    return (
-      `The server responded with ${response.status} ${response.statusText} and the ` +
-      `response body could not be read as JSON.`
-    );
-  }
-}
 
 /** Shipped in `public/samples` so the behaviour can be seen without hunting for files. */
 const SAMPLES = [
@@ -50,37 +39,77 @@ export default function Home() {
   const inputRef = useRef<HTMLInputElement>(null);
 
   async function upload(file: File) {
-    setState({ status: 'reading', fileName: file.name });
+    const working = (stage: string, pagesDone = 0, pageCount: number | null = null) =>
+      setState({ status: 'working', fileName: file.name, stage, pagesDone, pageCount });
 
-    const body = new FormData();
-    body.append('file', file);
+    working(`Uploading ${(file.size / 1024 / 1024).toFixed(1)} MB to storage`);
 
     try {
-      const response = await fetch('/api/extract', { method: 'POST', body });
+      const final = await submitDocument(file, {
+        onUploaded: () => working('Uploaded. Waiting for a worker to pick it up'),
+        onProgress: (status) => {
+          if (status.status === 'queued') {
+            working('Queued, waiting for a worker');
+          } else if (status.status === 'processing') {
+            working(
+              status.pageCount
+                ? `Reading page ${status.pagesDone} of ${status.pageCount}`
+                : 'Reading the document',
+              status.pagesDone,
+              status.pageCount,
+            );
+          }
+        },
+      });
 
-      if (!response.ok) {
+      // A job that failed still carries a real reason, written by the worker
+      // and passed through untouched. A job that succeeded may be nothing but
+      // refusals, and that is a result, not a failure.
+      if (final.status === 'failed') {
         setState({
           status: 'failed',
           fileName: file.name,
-          reason: await reasonFor(response),
+          reason:
+            final.failure?.humanMessage ??
+            'The document failed to process and no reason was recorded, which is ' +
+              'itself a bug. Please report it.',
         });
         return;
       }
 
-      setState({ status: 'done', result: (await response.json()) as ExtractionResult });
+      if (!final.result) {
+        setState({
+          status: 'failed',
+          fileName: file.name,
+          reason:
+            'The job finished successfully but came back without a result, which ' +
+            'should not be possible. Please report it.',
+        });
+        return;
+      }
+
+      setState({ status: 'done', result: final.result });
     } catch (err) {
       setState({
         status: 'failed',
         fileName: file.name,
         reason:
-          `The upload never reached the extraction service. ` +
-          `${err instanceof Error ? err.message : String(err)}`,
+          err instanceof JobError
+            ? err.humanMessage
+            : `The upload did not complete. ` +
+              `${err instanceof Error ? err.message : String(err)}`,
       });
     }
   }
 
   async function uploadSample(name: string) {
-    setState({ status: 'reading', fileName: name });
+    setState({
+      status: 'working',
+      fileName: name,
+      stage: 'Fetching the sample document',
+      pagesDone: 0,
+      pageCount: null,
+    });
     try {
       const response = await fetch(`/samples/${name}`);
       if (!response.ok) throw new Error(`the sample file returned ${response.status}`);
@@ -96,7 +125,7 @@ export default function Home() {
     }
   }
 
-  const busy = state.status === 'reading';
+  const busy = state.status === 'working';
 
   return (
     <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-10 sm:px-6">
@@ -162,10 +191,25 @@ export default function Home() {
           className="flex items-center gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3"
         >
           <span className="size-4 animate-spin rounded-full border-2 border-slate-300 border-t-slate-700" />
-          <p className="text-sm text-slate-700">
-            Reading {state.fileName} — checking each page for a text layer and
-            matching every figure to its source.
-          </p>
+          <div className="min-w-0">
+            <p className="text-sm text-slate-700">
+              {state.fileName} — {state.stage}.
+            </p>
+            {state.pageCount !== null && state.pageCount > 0 && (
+              <div
+                className="mt-2 h-1.5 w-56 overflow-hidden rounded-full bg-slate-200"
+                role="progressbar"
+                aria-valuenow={state.pagesDone}
+                aria-valuemin={0}
+                aria-valuemax={state.pageCount}
+              >
+                <div
+                  className="h-full rounded-full bg-slate-700 transition-[width] duration-300"
+                  style={{ width: `${(state.pagesDone / state.pageCount) * 100}%` }}
+                />
+              </div>
+            )}
+          </div>
         </div>
       )}
 
