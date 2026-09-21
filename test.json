@@ -1,0 +1,440 @@
+{
+  "fileName": "KBS-10234.pdf",
+  "pageCount": 1,
+  "documentNumber": {
+    "value": "KBS-10234",
+    "evidence": {
+      "page": 1,
+      "sourceText": "Document No: KBS-10234"
+    }
+  },
+  "documentDate": {
+    "value": "12 August 2026",
+    "evidence": {
+      "page": 1,
+      "sourceText": "Date: 12 August 2026"
+    }
+  },
+  "pages": [
+    {
+      "page": 1,
+      "title": {
+        "value": "Packing List",
+        "evidence": {
+          "page": 1,
+          "sourceText": "Packing List"
+        }
+      },
+      "lineItems": [
+        {
+          "page": 1,
+          "lineNumber": 1,
+          "description": {
+            "value": "10mm GIB Standard board 2400x1200",
+            "evidence": {
+              "page": 1,
+              "sourceText": "10mm GIB Standard board 2400x1200"
+            }
+          },
+          "quantity": {
+            "value": 48,
+            "evidence": {
+              "page": 1,
+              "sourceText": "48"
+            }
+          },
+          "unit": {
+            "value": "sheet",
+            "evidence": {
+              "page": 1,
+              "sourceText": "sheet"
+            }
+          },
+          "unitPrice": {
+            "value": 24.9,
+            "evidence": {
+              "page": 1,
+              "sourceText": "$24.90"
+            }
+          },
+          "lineTotal": {
+            "value": 1195.2,
+            "evidence": {
+              "page": 1,
+              "sourceText": "$1,195.20"
+            }
+          }
+        },
+        {
+          "page": 1,
+          "lineNumber": 2,
+          "description": {
+            "value": "13mm GIB Fyreline board 2700x1200",
+            "evidence": {
+              "page": 1,
+              "sourceText": "13mm GIB Fyreline board 2700x1200"
+            }
+          },
+          "quantity": {
+            "value": 12,
+            "evidence": {
+              "page": 1,
+              "sourceText": "12"
+            }
+          },
+          "unit": {
+            "value": "sheet",
+            "evidence": {
+              "page": 1,
+              "sourceText": "sheet"
+            }
+          },
+          "unitPrice": {
+            "value": 38.5,
+            "evidence": {
+              "page": 1,
+              "sourceText": "$38.50"
+            }
+          },
+          "lineTotal": {
+            "value": 462,
+            "evidence": {
+              "page": 1,
+              "sourceText": "$462.00"
+            }
+          }
+        },
+        {
+          "page": 1,
+          "lineNumber": 3,
+          "description": {
+            "value": "Stud adhesive 400ml cartridge",
+            "evidence": {
+              "page": 1,
+              "sourceText": "Stud adhesive 400ml cartridge"
+            }
+          },
+          "quantity": {
+            "value": 36,
+            "evidence": {
+              "page": 1,
+              "sourceText": "36"
+            }
+          },
+          "unit": {
+            "value": "ea",
+            "evidence": {
+              "page": 1,
+              "sourceText": "ea"
+            }
+          },
+          "unitPrice": {
+            "value": 9.8,
+            "evidence": {
+              "page": 1,
+              "sourceText": "$9.80"
+            }
+          },
+          "lineTotal": {
+            "value": 352.8,
+            "evidence": {
+              "page": 1,
+              "sourceText": "$352.80"
+            }
+          }
+        },
+        {
+          "page": 1,
+          "lineNumber": 4,
+          "description": {
+            "value": "GIB Rondo top hat batten 3.6m",
+            "evidence": {
+              "page": 1,
+              "sourceText": "GIB Rondo top hat batten 3.6m"
+            }
+          },
+          "quantity": {
+            "value": 20,
+            "evidence": {
+              "page": 1,
+              "sourceText": "20"
+            }
+          },
+          "unit": {
+            "value": "ea",
+            "evidence": {
+              "page": 1,
+              "sourceText": "ea"
+            }
+          },
+          "unitPrice": {
+            "value": 14.2,
+            "evidence": {
+              "page": 1,
+              "sourceText": "$14.20"
+            }
+          },
+          "lineTotal": {
+            "value": 284,
+            "evidence": {
+              "page": 1,
+              "sourceText": "$284.00"
+            }
+          }
+        },
+        {
+          "page": 1,
+          "lineNumber": 5,
+          "description": {
+            "value": "Plasterboard screws 32mm (box of 1000)",
+            "evidence": {
+              "page": 1,
+              "sourceText": "Plasterboard screws 32mm (box of 1000)"
+            }
+          },
+          "quantity": {
+            "value": 8,
+            "evidence": {
+              "page": 1,
+              "sourceText": "8"
+            }
+          },
+          "unit": {
+            "value": "box",
+            "evidence": {
+              "page": 1,
+              "sourceText": "box"
+            }
+          },
+          "unitPrice": {
+            "value": 42,
+            "evidence": {
+              "page": 1,
+              "sourceText": "$42.00"
+            }
+          },
+          "lineTotal": {
+            "value": 336,
+            "evidence": {
+              "page": 1,
+              "sourceText": "$336.00"
+            }
+          }
+        }
+      ],
+      "statedTotal": {
+        "value": 2630,
+        "evidence": {
+          "page": 1,
+          "sourceText": "$2,630.00"
+        }
+      },
+      "extracted": true
+    }
+  ],
+  "lineItems": [
+    {
+      "page": 1,
+      "lineNumber": 1,
+      "description": {
+        "value": "10mm GIB Standard board 2400x1200",
+        "evidence": {
+          "page": 1,
+          "sourceText": "10mm GIB Standard board 2400x1200"
+        }
+      },
+      "quantity": {
+        "value": 48,
+        "evidence": {
+          "page": 1,
+          "sourceText": "48"
+        }
+      },
+      "unit": {
+        "value": "sheet",
+        "evidence": {
+          "page": 1,
+          "sourceText": "sheet"
+        }
+      },
+      "unitPrice": {
+        "value": 24.9,
+        "evidence": {
+          "page": 1,
+          "sourceText": "$24.90"
+        }
+      },
+      "lineTotal": {
+        "value": 1195.2,
+        "evidence": {
+          "page": 1,
+          "sourceText": "$1,195.20"
+        }
+      }
+    },
+    {
+      "page": 1,
+      "lineNumber": 2,
+      "description": {
+        "value": "13mm GIB Fyreline board 2700x1200",
+        "evidence": {
+          "page": 1,
+          "sourceText": "13mm GIB Fyreline board 2700x1200"
+        }
+      },
+      "quantity": {
+        "value": 12,
+        "evidence": {
+          "page": 1,
+          "sourceText": "12"
+        }
+      },
+      "unit": {
+        "value": "sheet",
+        "evidence": {
+          "page": 1,
+          "sourceText": "sheet"
+        }
+      },
+      "unitPrice": {
+        "value": 38.5,
+        "evidence": {
+          "page": 1,
+          "sourceText": "$38.50"
+        }
+      },
+      "lineTotal": {
+        "value": 462,
+        "evidence": {
+          "page": 1,
+          "sourceText": "$462.00"
+        }
+      }
+    },
+    {
+      "page": 1,
+      "lineNumber": 3,
+      "description": {
+        "value": "Stud adhesive 400ml cartridge",
+        "evidence": {
+          "page": 1,
+          "sourceText": "Stud adhesive 400ml cartridge"
+        }
+      },
+      "quantity": {
+        "value": 36,
+        "evidence": {
+          "page": 1,
+          "sourceText": "36"
+        }
+      },
+      "unit": {
+        "value": "ea",
+        "evidence": {
+          "page": 1,
+          "sourceText": "ea"
+        }
+      },
+      "unitPrice": {
+        "value": 9.8,
+        "evidence": {
+          "page": 1,
+          "sourceText": "$9.80"
+        }
+      },
+      "lineTotal": {
+        "value": 352.8,
+        "evidence": {
+          "page": 1,
+          "sourceText": "$352.80"
+        }
+      }
+    },
+    {
+      "page": 1,
+      "lineNumber": 4,
+      "description": {
+        "value": "GIB Rondo top hat batten 3.6m",
+        "evidence": {
+          "page": 1,
+          "sourceText": "GIB Rondo top hat batten 3.6m"
+        }
+      },
+      "quantity": {
+        "value": 20,
+        "evidence": {
+          "page": 1,
+          "sourceText": "20"
+        }
+      },
+      "unit": {
+        "value": "ea",
+        "evidence": {
+          "page": 1,
+          "sourceText": "ea"
+        }
+      },
+      "unitPrice": {
+        "value": 14.2,
+        "evidence": {
+          "page": 1,
+          "sourceText": "$14.20"
+        }
+      },
+      "lineTotal": {
+        "value": 284,
+        "evidence": {
+          "page": 1,
+          "sourceText": "$284.00"
+        }
+      }
+    },
+    {
+      "page": 1,
+      "lineNumber": 5,
+      "description": {
+        "value": "Plasterboard screws 32mm (box of 1000)",
+        "evidence": {
+          "page": 1,
+          "sourceText": "Plasterboard screws 32mm (box of 1000)"
+        }
+      },
+      "quantity": {
+        "value": 8,
+        "evidence": {
+          "page": 1,
+          "sourceText": "8"
+        }
+      },
+      "unit": {
+        "value": "box",
+        "evidence": {
+          "page": 1,
+          "sourceText": "box"
+        }
+      },
+      "unitPrice": {
+        "value": 42,
+        "evidence": {
+          "page": 1,
+          "sourceText": "$42.00"
+        }
+      },
+      "lineTotal": {
+        "value": 336,
+        "evidence": {
+          "page": 1,
+          "sourceText": "$336.00"
+        }
+      }
+    }
+  ],
+  "documentTotal": {
+    "value": 2630,
+    "evidence": {
+      "page": 1,
+      "sourceText": "$2,630.00"
+    }
+  },
+  "refusals": []
+}
