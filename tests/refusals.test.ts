@@ -202,17 +202,17 @@ describe('a line that does not add up', () => {
   const line = (over: Partial<LineItem> = {}): LineItem => ({
     page: 2,
     lineNumber: 3,
-    description: { value: 'Timber H3.2 90x45', evidence: { page: 2, sourceText: 'Timber H3.2 90x45' } },
-    quantity: { value: 10, evidence: { page: 2, sourceText: '10' } },
-    unit: { value: 'length', evidence: { page: 2, sourceText: 'length' } },
-    unitPrice: { value: 18.4, evidence: { page: 2, sourceText: '$18.40' } },
-    lineTotal: { value: 184, evidence: { page: 2, sourceText: '$184.00' } },
+    description: { value: 'Timber H3.2 90x45', evidence: { source: 'text-layer' as const, page: 2, sourceText: 'Timber H3.2 90x45' } },
+    quantity: { value: 10, evidence: { source: 'text-layer' as const, page: 2, sourceText: '10' } },
+    unit: { value: 'length', evidence: { source: 'text-layer' as const, page: 2, sourceText: 'length' } },
+    unitPrice: { value: 18.4, evidence: { source: 'text-layer' as const, page: 2, sourceText: '$18.40' } },
+    lineTotal: { value: 184, evidence: { source: 'text-layer' as const, page: 2, sourceText: '$184.00' } },
     ...over,
   });
 
   test('is flagged, quoting all three figures, with neither corrected', () => {
     const wrong = line({
-      lineTotal: { value: 999, evidence: { page: 2, sourceText: '$999.00' } },
+      lineTotal: { value: 999, evidence: { source: 'text-layer' as const, page: 2, sourceText: '$999.00' } },
     });
 
     const [refusal] = lineArithmeticRefusals([wrong]);
@@ -233,9 +233,9 @@ describe('a line that does not add up', () => {
 
   test('tolerates a rounding difference of one cent', () => {
     const rounded = line({
-      quantity: { value: 3, evidence: { page: 2, sourceText: '3' } },
-      unitPrice: { value: 0.335, evidence: { page: 2, sourceText: '$0.335' } },
-      lineTotal: { value: 1.0, evidence: { page: 2, sourceText: '$1.00' } },
+      quantity: { value: 3, evidence: { source: 'text-layer' as const, page: 2, sourceText: '3' } },
+      unitPrice: { value: 0.335, evidence: { source: 'text-layer' as const, page: 2, sourceText: '$0.335' } },
+      lineTotal: { value: 1.0, evidence: { source: 'text-layer' as const, page: 2, sourceText: '$1.00' } },
     });
     expect(lineArithmeticRefusals([rounded])).toEqual([]);
   });

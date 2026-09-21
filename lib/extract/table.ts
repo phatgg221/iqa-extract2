@@ -81,21 +81,64 @@ function isSeparator(row: Row): boolean {
 
 function findHeader(rows: Row[]): { row: Row; index: number } | null {
   for (let i = 0; i < rows.length; i++) {
-    const labels = rows[i].cells.map((c) => c.text.toLowerCase());
-    if (labels.includes('item') && labels.includes('description')) {
+    // Matched against the whole row rather than individual cells, because OCR
+    // can run two labels together: "Item" and "Description" sit closer on the
+    // page than the words inside a phrase do, so no spacing rule separates them.
+    const line = rows[i].cells.map((c) => c.text.toLowerCase()).join(' ');
+    if (/\bitem\b/.test(line) && /\bdescription\b/.test(line)) {
       return { row: rows[i], index: i };
     }
   }
   return null;
 }
 
+/**
+ * Finds the labels inside a cell whose text ran several of them together,
+ * using the per-word positions OCR keeps, so each column still gets its own
+ * true origin instead of an estimate.
+ */
+function columnsWithinCell(cell: TextCell): Column[] {
+  if (!cell.words || cell.words.length < 2) return [];
+
+  const found: Column[] = [];
+  const words = cell.words;
+
+  for (let i = 0; i < words.length; i++) {
+    // Two-word labels first ("Unit Price"), so "Unit" does not claim the pair.
+    const pair = i + 1 < words.length ? `${words[i].text} ${words[i + 1].text}` : null;
+    const pairKey = pair ? HEADER_LABELS[pair.toLowerCase()] : undefined;
+    if (pairKey) {
+      found.push({ key: pairKey, x: words[i].x });
+      i++;
+      continue;
+    }
+    const key = HEADER_LABELS[words[i].text.toLowerCase()];
+    if (key) found.push({ key, x: words[i].x });
+  }
+
+  return found;
+}
+
 function buildColumns(header: Row): Column[] {
   const columns: Column[] = [];
+
   for (const cell of header.cells) {
     const key = HEADER_LABELS[cell.text.toLowerCase()];
-    if (key) columns.push({ key, x: cell.x });
+    if (key) {
+      columns.push({ key, x: cell.x });
+      continue;
+    }
+    columns.push(...columnsWithinCell(cell));
   }
-  return columns.sort((a, b) => a.x - b.x);
+
+  // Keep the leftmost origin for any label that turned up more than once.
+  const byKey = new Map<ColumnKey, Column>();
+  for (const column of columns) {
+    const seen = byKey.get(column.key);
+    if (!seen || column.x < seen.x) byKey.set(column.key, column);
+  }
+
+  return [...byKey.values()].sort((a, b) => a.x - b.x);
 }
 
 /** Cells are left-aligned on their column, so the nearest origin at or left of the cell wins. */

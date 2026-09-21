@@ -13,9 +13,37 @@
 
 import { admin, BUCKET } from '@/lib/supabase/admin';
 import { extract, UnreadablePdfError } from '@/lib/extract/extract';
+import { tesseractOcr } from '@/lib/extract/ocr';
 import type { JobRow } from './types';
 
 export const EXTRACTION_TOPIC = 'document-extractions';
+
+/**
+ * OCR is off unless the runtime is known to support it — `npm run worker`
+ * sets this.
+ *
+ * Not a preference, a constraint. Tesseract does its work in a spawned worker
+ * thread, which never starts inside a Next.js route handler: the call simply
+ * never returns. So the push consumer refuses scanned pages exactly as before,
+ * and only the standalone worker reads them. Turning this on for a serverless
+ * consumer would hang every scanned document.
+ */
+const OCR_ENABLED = process.env.OCR_ENABLED === 'true';
+
+/**
+ * Reads the result of a claim attempt.
+ *
+ * A function declared `returns extraction_jobs` gives SQL NULL when it matches
+ * nothing, but PostgREST hands that back as an object with every field null
+ * rather than as null. A plain `?? null` therefore sees an object and the
+ * caller goes off to process a job whose id is null — which is exactly what
+ * happened: the worker spun on a phantom job every two seconds once the queue
+ * emptied. The id is what makes a row real.
+ */
+export function asClaimedJob(data: unknown): JobRow | null {
+  const row = data as JobRow | null;
+  return row && typeof row.id === 'string' ? row : null;
+}
 
 /** What a delivery did, so the caller can log something true. */
 export type ProcessOutcome =
@@ -100,7 +128,13 @@ export async function runClaimedJob(job: JobRow): Promise<void> {
 
   let result;
   try {
-    result = await extract(bytes, job.file_name, { onPage: progressReporter(job.id) });
+    result = await extract(bytes, job.file_name, {
+      onPage: progressReporter(job.id),
+      // Without this, a scanned page is refused outright. With it, the page is
+      // read from its pixels and every figure is marked as OCR with its
+      // confidence, so a guess still looks like a guess all the way to the screen.
+      ...(OCR_ENABLED ? { ocr: tesseractOcr() } : {}),
+    });
   } catch (err) {
     if (err instanceof UnreadablePdfError) {
       await markFailed(
@@ -166,7 +200,7 @@ export async function processJobById(jobId: string): Promise<ProcessOutcome> {
     throw new Error(`could not claim job ${jobId}: ${error.message}`);
   }
 
-  const job = (data as JobRow | null) ?? null;
+  const job = asClaimedJob(data);
 
   if (!job) {
     return {

@@ -10,7 +10,7 @@ be pointed at on the page.** Refusing is a result. Guessing is not.
 ```bash
 npm install
 npm run dev     # http://localhost:3000
-npm test        # 29 tests, mostly about refusals
+npm test        # 40 tests, mostly about refusals
 ```
 
 Six sample documents are bundled and can be run from the page itself without
@@ -23,11 +23,11 @@ finding a file first.
 | Document | Result |
 |---|---|
 | `KBS-10234` | Clean. 5 line items, total $2,630.00, nothing refused. |
-| `KBS-10241` | Scanned image with no text layer. Zero line items, one refusal. The page really does show $2,002.40 in its pixels; that figure appears nowhere in the output. |
+| `KBS-10241` | Scanned image, no text layer. Refused outright by default; with OCR enabled it is read from the pixels and every figure is marked `OCR` with its confidence. |
 | `KBS-10255` | 4 line items with every line total `null` — the document has no Line Total column, so they are left blank rather than multiplied out. The weight column is flagged because `480g total` covers a whole line while `25kg` covers one bag. |
 | `KBS-10262` | 3 line items, total $5,122.40 published. Separately flags that the header says 14 pallets and the driver's note says 16. |
 | `KBS-10270` | 4 line items extracted. The printed total is $1,612.90, the lines add to $1,538.20; no total is reported and both figures are shown. |
-| `KBS-DR118` | 8 pages. Page 4 is a scan and is refused; the other 7 return 21 line items. No document total, for four stated reasons. |
+| `KBS-DR118` | 8 pages. Page 4 is a scan: refused by default (21 line items), read by OCR when enabled (24). No document total either way, for the stated reasons. |
 
 `KBS-DR118` is the one worth opening. Summing its readable pages gives
 $4,683.00, which is wrong at least three ways over — page 5 is a summary that
@@ -40,6 +40,8 @@ service reports no total and says all four things.
 ```
 app/api/extract/route.ts   HTTP boundary
 lib/extract/pdf.ts         PDF -> positioned text cells (the only pdfjs-aware file)
+lib/extract/ocr.ts         scanned page -> the same cells, tagged as OCR
+lib/extract/png.ts         raw pixels -> PNG, so OCR needs no native canvas
 lib/extract/table.ts       cells -> columns and rows, per page
 lib/extract/rules.ts       the refusal rules
 lib/extract/extract.ts     orchestration, containment, the document-total decision
@@ -66,6 +68,36 @@ both are shown and neither is reported as the answer.
 
 **Failures are contained per page.** Each page parses inside its own try/catch,
 so one unreadable page costs you that page and nothing else.
+
+### Scanned pages
+
+A page with no text layer is refused by default. Pass an OCR reader and it is
+read from its pixels instead:
+
+```ts
+import { tesseractOcr } from '@/lib/extract/ocr';
+await extract(bytes, fileName, { ocr: tesseractOcr() });
+```
+
+The worker enables this unless `OCR_ENABLED=false`. OCR is injected rather than
+imported so the core never depends on it — the synchronous route and most tests
+never load tesseract at all.
+
+What makes this safe to publish rather than a hole in the rule: OCR produces
+the *same* `TextCell` shape as the text-layer reader, so the same positional
+parser reads a scan, but every cell is tagged `source: 'ocr'` and carries a
+confidence. That flows into the evidence, so the API says which figures were
+read off pixels:
+
+```json
+{ "value": 160, "evidence": {
+    "page": 4, "sourceText": "$160.00", "source": "ocr", "confidence": 95 } }
+```
+
+Anything below 80% raises a `LOW_OCR_CONFIDENCE` refusal naming the exact
+fields, and the screen badges every OCR'd figure. The value is still shown —
+it *is* printed on the page, and hiding our best reading of it would be its own
+kind of dishonesty — but it never passes as a figure read from the file.
 
 ### The HTTP contract
 
@@ -117,8 +149,18 @@ way that an empty field does not.
   Every sample has one. A document that labels its columns differently gets
   `NO_TABLE_FOUND` — it refuses rather than misreads, which is the safe
   direction, but it is a narrow hinge for the whole parser to turn on.
-- **No OCR.** Scanned pages are always refused. That is honest but it is not
-  useful, and two of six samples are affected.
+- **OCR is new and lightly proven.** Scanned pages are now read (see below),
+  but on exactly one document. The gap threshold that separates columns was
+  measured on that one scan, and a differently spaced table could split or
+  merge cells wrongly. The 80% confidence bar for trusting a figure is a
+  judgement, not a calibrated number.
+- **OCR only reads a page that is one whole-page image.** A page assembled
+  from several images is refused with that as the reason, rather than stitched
+  together.
+- **A scanned page loses its heading.** The rules that spot a summary, a
+  returns note or a credit adjustment read the page title, and OCR splits that
+  line into pieces, so a scanned returns page would be treated as an ordinary
+  delivery.
 - **Duplicate-page detection is a heuristic.** It flags pages whose amounts match
   to the cent. Two sites that genuinely received identical orders would be
   flagged too. It only ever withholds the total — it never drops line items —
@@ -144,11 +186,12 @@ way that an empty field does not.
 
 ### What I'd do with three more days
 
-1. **OCR for scanned pages, with confidence carried through.** Tesseract or a
-   hosted OCR, with per-token confidence attached to the evidence, and a
-   threshold below which a value is refused rather than reported. This turns
-   two of six samples from "nothing" into "something, marked as lower
-   confidence", and the evidence model already has a place to put it.
+1. **Harden the OCR.** It exists now and reads the scanned page correctly, but
+   it needs a second and third vendor's scans before I would trust the column
+   splitting, a calibrated confidence bar rather than a chosen one, and
+   deskewing for anything photographed rather than scanned. Recovering page
+   titles from OCR would also restore the summary/returns/credit rules on
+   scanned pages.
 2. **An LLM as a second reader, never as the source.** Run a model over the same
    pages and compare its line items against the parser's. Where they agree,
    nothing changes. Where they disagree, raise a refusal. The model gets to

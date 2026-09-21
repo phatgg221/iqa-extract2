@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import type { LineItem, PageResult, Traced } from '@/lib/extract/types';
 import { money } from '@/lib/labels';
-import { EvidenceQuote } from './Evidence';
+import { EvidenceQuote, OcrBadge } from './Evidence';
 
 /** A figure that was not printed. Never a zero, never a blank that looks like one. */
 function NotPrinted() {
@@ -35,6 +35,11 @@ function Row({ item }: { item: LineItem }) {
         </td>
         <td className="py-2 pr-3 align-top text-sm text-slate-900">
           {item.description.value}
+          {item.description.evidence.source === 'ocr' && (
+            <span className="ml-2 align-middle">
+              <OcrBadge confidence={item.lineTotal?.evidence.confidence ?? item.description.evidence.confidence} />
+            </span>
+          )}
           <button
             type="button"
             onClick={() => setOpen((v) => !v)}

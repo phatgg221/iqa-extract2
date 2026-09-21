@@ -9,11 +9,21 @@
  */
 
 import type { Evidence, LineItem, Refusal } from './types';
+import type { TextCell } from './pdf';
 import { formatMoney, toCents } from './money';
 import type { ParsedPage } from './table';
 
-export function ev(page: number, sourceText: string): Evidence {
-  return { page, sourceText };
+/**
+ * Builds evidence from the cell the text came from, so provenance and
+ * confidence are carried automatically rather than remembered at each call.
+ */
+export function ev(page: number, cell: TextCell): Evidence {
+  return {
+    page,
+    sourceText: cell.text,
+    source: cell.source,
+    ...(cell.confidence !== undefined ? { confidence: cell.confidence } : {}),
+  };
 }
 
 function refusal(r: Partial<Refusal> & Pick<Refusal, 'scope' | 'code' | 'humanMessage'>): Refusal {
@@ -68,7 +78,7 @@ export function pageLevelRefusals(parsed: ParsedPage): Refusal[] {
         humanMessage:
           `Page ${page} has text on it but no line-item table we recognise, ` +
           `so no items have been taken from it.`,
-        evidence: parsed.prose.slice(0, 2).map((c) => ev(page, c.text)),
+        evidence: parsed.prose.slice(0, 2).map((c) => ev(page, c)),
       }),
     );
     return out;
@@ -87,7 +97,7 @@ export function pageLevelRefusals(parsed: ParsedPage): Refusal[] {
           `Quantities and unit prices are shown below as printed, but the line ` +
           `totals have been left blank rather than multiplied out, because a ` +
           `calculated figure is not what the document says.`,
-        evidence: parsed.headerCells.map((c) => ev(page, c.text)),
+        evidence: parsed.headerCells.map((c) => ev(page, c)),
       }),
     );
   }
@@ -124,7 +134,7 @@ function weightSemanticRefusals(parsed: ParsedPage): Refusal[] {
         `every line. Most rows give the weight of a single item, but at least one ` +
         `gives a weight for the whole line. These figures cannot be compared or ` +
         `added up without someone confirming which is which.`,
-      evidence: weights.map((c) => ev(parsed.page, c.text)),
+      evidence: weights.map((c) => ev(parsed.page, c)),
     }),
   ];
 }
@@ -133,13 +143,13 @@ function weightSemanticRefusals(parsed: ParsedPage): Refusal[] {
 const COUNTED = /(\d+)\s+(pallets?|cartons?|packages?|bundles?)\b/gi;
 
 function proseContradictionRefusals(parsed: ParsedPage): Refusal[] {
-  const byNoun = new Map<string, { count: number; source: string }[]>();
+  const byNoun = new Map<string, { count: number; cell: TextCell }[]>();
 
   for (const cell of parsed.prose) {
     for (const match of cell.text.matchAll(COUNTED)) {
       const noun = match[2].toLowerCase().replace(/s$/, '');
       const list = byNoun.get(noun) ?? [];
-      list.push({ count: Number(match[1]), source: cell.text });
+      list.push({ count: Number(match[1]), cell });
       byNoun.set(noun, list);
     }
   }
@@ -160,10 +170,70 @@ function proseContradictionRefusals(parsed: ParsedPage): Refusal[] {
           `Page ${parsed.page} gives two different counts for ${noun}s: ` +
           `${counts.join(' and ')}. The document does not say which is right, and ` +
           `we have not picked one. Both statements are quoted below.`,
-        evidence: sightings.map((s) => ev(parsed.page, s.source)),
+        evidence: sightings.map((s) => ev(parsed.page, s.cell)),
       }),
     );
   }
+  return out;
+}
+
+/**
+ * Below this, an OCR'd figure is reported but explicitly not stood behind.
+ *
+ * Individual words under 60 never make it out of `lib/extract/ocr.ts` at all.
+ * This higher bar governs whether a *number* is trustworthy enough to act on:
+ * a misread digit in a price is the exact failure the whole service exists to
+ * prevent, and unlike a missing line it is invisible.
+ */
+export const TRUSTED_OCR_CONFIDENCE = 80;
+
+/**
+ * Flags figures that were read off pixels rather than out of the file.
+ *
+ * Note what this does *not* do: it does not drop the values. They are printed
+ * on the page and OCR is our best reading of them, so hiding them would be its
+ * own kind of dishonesty. It says, in the output, that these numbers came from
+ * a guess at an image and how confident that guess was.
+ */
+export function ocrConfidenceRefusals(items: LineItem[]): Refusal[] {
+  const byPage = new Map<number, { field: string; line: number; evidence: Evidence }[]>();
+
+  for (const item of items) {
+    const fields: [string, typeof item.quantity][] = [
+      ['quantity', item.quantity],
+      ['unit price', item.unitPrice],
+      ['line total', item.lineTotal],
+    ];
+    for (const [field, traced] of fields) {
+      if (!traced || traced.evidence.source !== 'ocr') continue;
+      if ((traced.evidence.confidence ?? 0) >= TRUSTED_OCR_CONFIDENCE) continue;
+      const list = byPage.get(item.page) ?? [];
+      list.push({ field, line: item.lineNumber, evidence: traced.evidence });
+      byPage.set(item.page, list);
+    }
+  }
+
+  const out: Refusal[] = [];
+  for (const [page, weak] of byPage) {
+    const lowest = Math.min(...weak.map((w) => w.evidence.confidence ?? 0));
+    out.push(
+      refusal({
+        scope: 'page',
+        code: 'LOW_OCR_CONFIDENCE',
+        page,
+        humanMessage:
+          `Page ${page} is a scan, so ${weak.length === 1 ? 'one figure' : `${weak.length} figures`} ` +
+          `on it had to be read from the image rather than from the document itself, ` +
+          `and ${weak.length === 1 ? 'it was' : 'some were'} not read clearly — as low as ` +
+          `${lowest}% certain. ${weak.length === 1 ? 'It is' : 'They are'} shown below ` +
+          `marked as read by OCR, but check ${weak.length === 1 ? 'it' : 'them'} against ` +
+          `the original before quoting from ${weak.length === 1 ? 'it' : 'them'}. ` +
+          `Affected: ${weak.map((w) => `line ${w.line} ${w.field}`).join(', ')}.`,
+        evidence: weak.map((w) => w.evidence),
+      }),
+    );
+  }
+
   return out;
 }
 

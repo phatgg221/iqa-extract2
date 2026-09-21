@@ -228,6 +228,30 @@ dependency, so a route handler and a worker can both import it.
 
 ---
 
+## Reading scanned pages
+
+A page with no text layer is refused by default. The **worker** reads it with
+OCR instead — `npm run worker` sets `OCR_ENABLED=true`.
+
+It is deliberately not enabled anywhere else, and that is a constraint rather
+than a preference: tesseract does its work in a spawned worker thread, which
+never starts inside a Next.js route handler. The call simply never returns, and
+the symptom is a job stuck in `processing` until the stalled-job sweep catches
+it ten minutes later. So:
+
+| Path | Scanned pages |
+|---|---|
+| `npm run worker` | read by OCR, every figure marked with its confidence |
+| Vercel Queues consumer | refused, exactly as before |
+| `POST /api/extract` | refused, exactly as before |
+
+OCR is also bounded to 60 seconds per page, so even if the engine does wedge,
+the page becomes a refusal rather than a hung job.
+
+Enabling it on the serverless consumer would need a build of tesseract that
+does not depend on worker threads, plus the language data bundled into the
+function — otherwise every cold start re-downloads roughly 15 MB.
+
 ## Deploying
 
 One gotcha that only shows up in production. `serverExternalPackages`

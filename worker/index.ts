@@ -14,7 +14,7 @@
  */
 
 import { admin } from '@/lib/supabase/admin';
-import { runClaimedJob } from '@/lib/jobs/process';
+import { asClaimedJob, runClaimedJob } from '@/lib/jobs/process';
 import type { JobRow } from '@/lib/jobs/types';
 
 const IDLE_POLL_MS = 2000;
@@ -23,7 +23,7 @@ const STALL_TIMEOUT = '10 minutes';
 async function claimNext(): Promise<JobRow | null> {
   const { data, error } = await admin().rpc('claim_extraction_job');
   if (error) throw new Error(`could not claim a job: ${error.message}`);
-  return (data as JobRow | null) ?? null;
+  return asClaimedJob(data);
 }
 
 async function reapStalled() {

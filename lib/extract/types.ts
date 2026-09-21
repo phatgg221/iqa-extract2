@@ -33,14 +33,28 @@ export type RefusalCode =
   /** Amounts whose sign (add or subtract) the document never states. */
   | 'SIGN_UNDETERMINED'
   /** A page that may restate figures counted elsewhere. */
-  | 'POSSIBLE_DUPLICATE_PAGE';
+  | 'POSSIBLE_DUPLICATE_PAGE'
+  /** Read by OCR, but not clearly enough to stand behind. */
+  | 'LOW_OCR_CONFIDENCE';
 
 export type RefusalScope = 'document' | 'page' | 'line' | 'field';
 
-/** Where a value came from. `sourceText` is copied verbatim off the page. */
+/**
+ * Where a value came from.
+ *
+ * `source` is part of the evidence, not a footnote on it. Text read out of the
+ * file is a fact about the document; text read by OCR is a reading of pixels
+ * that could be wrong, and the difference has to survive all the way to the
+ * screen. There is deliberately no way to record a value without saying which
+ * of the two it is.
+ */
 export interface Evidence {
   page: number;
+  /** Copied verbatim off the page, or as OCR read it. */
   sourceText: string;
+  source: 'text-layer' | 'ocr';
+  /** 0-100. Present only for OCR. */
+  confidence?: number;
 }
 
 /** A value that knows where it came from. The only way to publish a number. */

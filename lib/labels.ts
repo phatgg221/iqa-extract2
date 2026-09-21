@@ -20,6 +20,7 @@ export const REFUSAL_TITLES: Record<RefusalCode, string> = {
   AMBIGUOUS_UNIT_SEMANTICS: 'A column does not mean the same thing throughout',
   SIGN_UNDETERMINED: 'Unclear whether these amounts add or subtract',
   POSSIBLE_DUPLICATE_PAGE: 'These pages may be the same figures twice',
+  LOW_OCR_CONFIDENCE: 'Read from a scan, and not read clearly',
 };
 
 export function money(amount: number): string {

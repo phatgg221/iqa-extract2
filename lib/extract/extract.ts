@@ -13,12 +13,13 @@
  *    most wants, which is exactly the thing not to do.
  */
 
-import { readPages, UnreadablePdfError, type RawPage, type ReadOptions } from './pdf';
+import { readPages, UnreadablePdfError, type RawPage, type ReadOptions, type TextCell } from './pdf';
 import { parsePage, readRow, type ParsedPage } from './table';
 import {
   classifyPage,
   ev,
   lineArithmeticRefusals,
+  ocrConfidenceRefusals,
   pageLevelRefusals,
 } from './rules';
 import { formatMoney, fromCents, toCents } from './money';
@@ -52,13 +53,13 @@ export async function extract(
     pages.push({
       page: parsed.page,
       title: parsed.title
-        ? { value: parsed.title.text, evidence: ev(parsed.page, parsed.title.text) }
+        ? { value: parsed.title.text, evidence: ev(parsed.page, parsed.title) }
         : null,
       lineItems: items,
       statedTotal: parsed.statedTotal
         ? {
             value: parsed.statedTotal.value,
-            evidence: ev(parsed.page, parsed.statedTotal.cell.text),
+            evidence: ev(parsed.page, parsed.statedTotal.cell),
           }
         : null,
       extracted: parsed.hasText && parsed.hasTable,
@@ -66,6 +67,7 @@ export async function extract(
   }
 
   refusals.push(...lineArithmeticRefusals(lineItems));
+  refusals.push(...ocrConfidenceRefusals(lineItems));
   refusals.push(...siteContradictionRefusals(parsedPages));
   refusals.push(...duplicatePageRefusals(pages));
 
@@ -84,13 +86,13 @@ export async function extract(
     documentNumber: meta?.documentNumber
       ? {
           value: meta.documentNumber.value,
-          evidence: ev(meta.page, meta.documentNumber.cell.text),
+          evidence: ev(meta.page, meta.documentNumber.cell),
         }
       : null,
     documentDate: dateMeta?.documentDate
       ? {
           value: dateMeta.documentDate.value,
-          evidence: ev(dateMeta.page, dateMeta.documentDate.cell.text),
+          evidence: ev(dateMeta.page, dateMeta.documentDate.cell),
         }
       : null,
     pages,
@@ -158,7 +160,7 @@ function buildLineItems(parsed: ParsedPage, refusals: Refusal[]): LineItem[] {
           `The quantity on line ${row.lineNumber} of page ${page} reads ` +
           `"${cells.qty.text}", which is not a plain number, so it has been left out ` +
           `rather than interpreted.`,
-        evidence: [ev(page, cells.qty.text)],
+        evidence: [ev(page, cells.qty)],
       });
     }
 
@@ -167,23 +169,23 @@ function buildLineItems(parsed: ParsedPage, refusals: Refusal[]): LineItem[] {
     items.push({
       page,
       lineNumber: row.lineNumber,
-      description: { value: description.text, evidence: ev(page, description.text) },
+      description: { value: description.text, evidence: ev(page, description) },
       quantity:
         cells.qty && quantity !== null
-          ? { value: quantity, evidence: ev(page, cells.qty.text) }
+          ? { value: quantity, evidence: ev(page, cells.qty) }
           : null,
       unit: unitCell
-        ? { value: unitCell.text, evidence: ev(page, unitCell.text) }
+        ? { value: unitCell.text, evidence: ev(page, unitCell) }
         : unitFromPrice && cells.unitPrice
-          ? { value: unitFromPrice, evidence: ev(page, cells.unitPrice.text) }
+          ? { value: unitFromPrice, evidence: ev(page, cells.unitPrice) }
           : null,
       unitPrice:
         cells.unitPrice && unitPrice !== null
-          ? { value: unitPrice, evidence: ev(page, cells.unitPrice.text) }
+          ? { value: unitPrice, evidence: ev(page, cells.unitPrice) }
           : null,
       lineTotal:
         cells.lineTotal && lineTotal !== null
-          ? { value: lineTotal, evidence: ev(page, cells.lineTotal.text) }
+          ? { value: lineTotal, evidence: ev(page, cells.lineTotal) }
           : null,
     });
   }
@@ -198,7 +200,7 @@ function buildLineItems(parsed: ParsedPage, refusals: Refusal[]): LineItem[] {
  */
 function siteContradictionRefusals(pages: ParsedPage[]): Refusal[] {
   const SITE = /\bSite\s+(\d+)\s+of\s+(\d+)\s*[-–]\s*(.+)$/i;
-  const byAddress = new Map<string, { site: number; page: number; source: string }[]>();
+  const byAddress = new Map<string, { site: number; page: number; cell: TextCell }[]>();
 
   for (const page of pages) {
     if (!page.title) continue;
@@ -206,7 +208,7 @@ function siteContradictionRefusals(pages: ParsedPage[]): Refusal[] {
     if (!m) continue;
     const address = m[3].trim().toLowerCase();
     const list = byAddress.get(address) ?? [];
-    list.push({ site: Number(m[1]), page: page.page, source: page.title.text });
+    list.push({ site: Number(m[1]), page: page.page, cell: page.title });
     byAddress.set(address, list);
   }
 
@@ -227,7 +229,7 @@ function siteContradictionRefusals(pages: ParsedPage[]): Refusal[] {
         `mislabelled or the same delivery appears twice, and the document does ` +
         `not say which. Their line items are listed separately below and have ` +
         `not been merged or de-duplicated.`,
-      evidence: sightings.map((s) => ev(s.page, s.source)),
+      evidence: sightings.map((s) => ev(s.page, s.cell)),
     });
   }
   return out;
@@ -292,7 +294,7 @@ function decideDocumentTotal(
   if (pages.length === 1 && withTotal.length === 1) {
     const page = withTotal[0];
     const stated = page.statedTotal!;
-    const evidence = ev(page.page, stated.cell.text);
+    const evidence = ev(page.page, stated.cell);
 
     const totals = lineItems.map((i) => i.lineTotal);
     const allPriced = totals.length > 0 && totals.every((t) => t !== null);
@@ -317,9 +319,7 @@ function decideDocumentTotal(
             `shown so you can check against the original.`,
           evidence: [
             evidence,
-            ...lineItems
-              .filter((i) => i.lineTotal)
-              .map((i) => i.lineTotal!.evidence),
+            ...lineItems.filter((i) => i.lineTotal).map((i) => i.lineTotal!.evidence),
           ],
         });
         return { documentTotal: null, refusals };
@@ -344,14 +344,14 @@ function decideDocumentTotal(
         `page ${page.page} is headed as a summary and may repeat items already ` +
           `counted on earlier pages`,
       );
-      if (page.title) evidence.push(ev(page.page, page.title.text));
+      if (page.title) evidence.push(ev(page.page, page.title));
     }
     if (kind.isReturn || kind.isCredit) {
       reasons.push(
         `page ${page.page} is a ${kind.isReturn ? 'returns note' : 'credit adjustment'}, ` +
           `and the document never says whether its amounts should be added or subtracted`,
       );
-      if (page.title) evidence.push(ev(page.page, page.title.text));
+      if (page.title) evidence.push(ev(page.page, page.title));
     }
   }
 
@@ -361,7 +361,7 @@ function decideDocumentTotal(
       `the only total on the document refers you back to the individual lines ` +
         `instead of giving a figure`,
     );
-    evidence.push(ev(totalRowNote.page, totalRowNote.totalRowWithoutAmount.text));
+    evidence.push(ev(totalRowNote.page, totalRowNote.totalRowWithoutAmount));
   }
 
   if (withTotal.length === 0 && reasons.length === 0) {

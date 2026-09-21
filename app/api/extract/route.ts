@@ -15,6 +15,10 @@ import type { ExtractionResult } from '@/lib/extract/types';
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
+// No OCR here: tesseract's worker thread does not start inside a Next.js
+// route handler, so a scanned page would hang rather than be read. Scans are
+// handled by the standalone worker - see lib/jobs/process.ts.
+
 const MAX_BYTES = 25 * 1024 * 1024;
 
 export type ApiErrorCode =

@@ -60,6 +60,9 @@ function DocumentTotal({ result }: { result: ExtractionResult }) {
 
 export function ResultView({ result }: { result: ExtractionResult }) {
   const readablePages = result.pages.filter((p) => p.extracted).length;
+  const readByOcr = result.lineItems.some(
+    (i) => i.description.evidence.source === 'ocr',
+  );
 
   return (
     <div className="space-y-6">
@@ -109,7 +112,7 @@ export function ResultView({ result }: { result: ExtractionResult }) {
           Not extracted ({result.refusals.length}{' '}
           {result.refusals.length === 1 ? 'item' : 'items'} we could not confirm)
         </h2>
-        <RefusalList refusals={result.refusals} />
+        <RefusalList refusals={result.refusals} readByOcr={readByOcr} />
       </section>
     </div>
   );
