@@ -13,7 +13,7 @@ import {
   type CreatedJob,
   type JobSignal,
   type JobStatusResponse,
-  type JobSummary,
+  type JobHistoryPage,
 } from './types';
 
 /**
@@ -102,12 +102,21 @@ async function fetchStatus(jobId: string): Promise<JobStatusResponse> {
   return response.json();
 }
 
-/** The upload history. Summaries only — opening one fetches it in full. */
-export async function fetchHistory(): Promise<JobSummary[]> {
-  const response = await fetch('/api/jobs', { cache: 'no-store' });
+/** One page of the upload history. Summaries only — opening one fetches it in full. */
+export async function fetchHistory(
+  { limit = 20, offset = 0 }: { limit?: number; offset?: number } = {},
+): Promise<JobHistoryPage> {
+  const query = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  const response = await fetch(`/api/jobs?${query}`, { cache: 'no-store' });
   if (!response.ok) throw await reasonFor(response, 'Listing previous uploads');
+
   const body = await response.json();
-  return Array.isArray(body?.jobs) ? body.jobs : [];
+  return {
+    jobs: Array.isArray(body?.jobs) ? body.jobs : [],
+    total: typeof body?.total === 'number' ? body.total : 0,
+    limit: typeof body?.limit === 'number' ? body.limit : limit,
+    offset: typeof body?.offset === 'number' ? body.offset : offset,
+  };
 }
 
 /** Re-opens a finished job, result and all. */

@@ -77,6 +77,15 @@ export function toSummary(row: JobRow): JobSummary {
   };
 }
 
+/** One page of the upload history. */
+export interface JobHistoryPage {
+  jobs: JobSummary[];
+  /** Total rows matching the query, so the caller knows where the end is. */
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 /** What `POST /api/jobs` returns: everything the browser needs to upload. */
 export interface CreatedJob {
   jobId: string;

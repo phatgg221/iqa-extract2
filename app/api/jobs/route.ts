@@ -16,8 +16,18 @@ export const runtime = 'nodejs';
 /** Generous, because the file no longer travels through a function. */
 const MAX_BYTES = 200 * 1024 * 1024;
 
-/** How many past uploads the history shows. */
-const HISTORY_LIMIT = 20;
+/** Page size for the history, and the most a caller may ask for at once. */
+const DEFAULT_LIMIT = 20;
+const MAX_LIMIT = 100;
+
+/** Reads a positive integer query param, ignoring anything that is not one. */
+function intParam(url: URL, name: string, fallback: number, max: number): number {
+  const raw = url.searchParams.get(name);
+  if (raw === null) return fallback;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 0) return fallback;
+  return Math.min(value, max);
+}
 
 /**
  * GET /api/jobs — the upload history.
@@ -26,19 +36,29 @@ const HISTORY_LIMIT = 20;
  * which for a long document is megabytes, and twenty of those is not a list.
  * Opening a row fetches that one job in full.
  *
+ * Paged with `?limit=&offset=`. Offset paging is right at this scale and for a
+ * list a person is reading; a cursor would be better under constant inserts,
+ * where a row arriving mid-read shifts everything down a page.
+ *
  * Note there is no auth on this service, so this lists every job rather than
  * one person's. That was already true of reading a job by id; listing just
  * makes it easier to find them. It needs an owner column before this is
  * exposed to more than one person.
  */
-export async function GET() {
+export async function GET(request: Request) {
+  const url = new URL(request.url);
+  const limit = Math.max(1, intParam(url, 'limit', DEFAULT_LIMIT, MAX_LIMIT));
+  const offset = intParam(url, 'offset', 0, Number.MAX_SAFE_INTEGER);
+
   try {
-    const { data, error } = await admin()
+    // `count: 'exact'` so the caller can say "1-20 of 47" and know when it has
+    // reached the end, rather than guessing from a short page.
+    const { data, error, count } = await admin()
       .from('extraction_jobs')
-      .select()
+      .select('*', { count: 'exact' })
       .neq('status', 'awaiting_upload') // uploads that never arrived
       .order('created_at', { ascending: false })
-      .limit(HISTORY_LIMIT)
+      .range(offset, offset + limit - 1)
       .returns<JobRow[]>();
 
     if (error) {
@@ -56,7 +76,7 @@ export async function GET() {
     }
 
     return Response.json(
-      { jobs: (data ?? []).map(toSummary) },
+      { jobs: (data ?? []).map(toSummary), total: count ?? 0, limit, offset },
       { status: 200, headers: { 'Cache-Control': 'no-store' } },
     );
   } catch (err) {

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ExtractionResult } from '@/lib/extract/types';
 import { JobError, fetchHistory, loadJob, submitDocument } from '@/lib/jobs/client';
-import type { JobSummary } from '@/lib/jobs/types';
+import type { JobHistoryPage, JobSummary } from '@/lib/jobs/types';
 import { JobHistory } from './components/JobHistory';
 import { ResultView } from './components/ResultView';
 
@@ -37,6 +37,9 @@ function historyErrorMessage(err: unknown): string {
         `${err instanceof Error ? err.message : String(err)}`;
 }
 
+/** Rows per page of history. */
+const PAGE_SIZE = 10;
+
 /** Shipped in `public/samples` so the behaviour can be seen without hunting for files. */
 const SAMPLES = [
   { file: 'KBS-10234.pdf', note: 'clean' },
@@ -49,17 +52,22 @@ const SAMPLES = [
 
 export default function Home() {
   const [state, setState] = useState<State>({ status: 'idle' });
-  const [history, setHistory] = useState<JobSummary[]>([]);
+  const [history, setHistory] = useState<JobHistoryPage>({
+    jobs: [],
+    total: 0,
+    limit: PAGE_SIZE,
+    offset: 0,
+  });
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [openingJobId, setOpeningJobId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   /** Called from event handlers, after an upload finishes or on demand. */
-  const refreshHistory = useCallback(async () => {
+  const refreshHistory = useCallback(async (offset = 0) => {
     try {
-      const jobs = await fetchHistory();
-      setHistory(jobs);
+      const page = await fetchHistory({ limit: PAGE_SIZE, offset });
+      setHistory(page);
       setHistoryError(null);
     } catch (err) {
       setHistoryError(historyErrorMessage(err));
@@ -74,9 +82,9 @@ export default function Home() {
 
     void (async () => {
       try {
-        const jobs = await fetchHistory();
+        const page = await fetchHistory({ limit: PAGE_SIZE, offset: 0 });
         if (alive) {
-          setHistory(jobs);
+          setHistory(page);
           setHistoryError(null);
         }
       } catch (err) {
@@ -100,7 +108,8 @@ export default function Home() {
         onJobCreated: (jobId) => setActiveJobId(jobId),
         onUploaded: () => {
           working('Uploaded — waiting to be read');
-          void refreshHistory();
+          // The new job is the newest row, so show the page it is actually on.
+          void refreshHistory(0);
         },
         onProgress: (status) => {
           if (status.status === 'queued') {
@@ -117,7 +126,7 @@ export default function Home() {
         },
       });
 
-      void refreshHistory();
+      void refreshHistory(0);
 
       // A job that failed still carries a real reason, written by the consumer
       // and passed through untouched. A job that succeeded may be nothing but
@@ -147,7 +156,7 @@ export default function Home() {
 
       setState({ status: 'done', result: final.result });
     } catch (err) {
-      void refreshHistory();
+      void refreshHistory(0);
       setState({
         status: 'failed',
         fileName: file.name,
@@ -265,7 +274,7 @@ export default function Home() {
           </h2>
           <button
             type="button"
-            onClick={() => void refreshHistory()}
+            onClick={() => void refreshHistory(history.offset)}
             className="cursor-pointer text-xs font-medium text-sky-700 underline underline-offset-2 hover:text-sky-900"
           >
             Refresh
@@ -273,11 +282,12 @@ export default function Home() {
         </div>
 
         <JobHistory
-          jobs={history}
+          page={history}
           activeJobId={activeJobId}
           loadingJobId={openingJobId}
           error={historyError}
           onOpen={(job) => void openJob(job)}
+          onPage={(offset) => void refreshHistory(offset)}
         />
 
         {/*

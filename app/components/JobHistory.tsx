@@ -1,6 +1,6 @@
 'use client';
 
-import type { JobStatus, JobSummary } from '@/lib/jobs/types';
+import type { JobHistoryPage, JobStatus, JobSummary } from '@/lib/jobs/types';
 
 /** Short, unfussy relative time. Exact timestamps are not the point here. */
 function ago(iso: string): string {
@@ -46,7 +46,11 @@ function outcome(job: JobSummary): string {
   // Unknown is not zero. If the counts were never recorded, say nothing rather
   // than reporting "0 line items" for a document that has plenty; the status
   // pill already says the document was read.
-  if (job.lineItemCount === null) return '';
+  //
+  // Loose equality on purpose: the field is absent rather than null whenever
+  // migration 0004 has not been applied, and `undefined === null` is false —
+  // which put "undefined line items" on screen.
+  if (job.lineItemCount == null) return '';
 
   const items = job.lineItemCount;
   const refusals = job.refusalCount ?? 0;
@@ -56,19 +60,26 @@ function outcome(job: JobSummary): string {
 }
 
 export function JobHistory({
-  jobs,
+  page,
   activeJobId,
   loadingJobId,
   error,
   onOpen,
+  onPage,
 }: {
-  jobs: JobSummary[];
+  page: JobHistoryPage;
   activeJobId: string | null;
   loadingJobId: string | null;
   /** The real reason the history could not be read, passed through verbatim. */
   error: string | null;
   onOpen: (job: JobSummary) => void;
+  onPage: (offset: number) => void;
 }) {
+  const { jobs, total, limit, offset } = page;
+  const first = offset + 1;
+  const last = offset + jobs.length;
+  const hasPrev = offset > 0;
+  const hasNext = last < total;
   if (error) {
     return (
       <div className="rounded-lg border border-amber-300 bg-amber-50/60 px-4 py-3">
@@ -89,7 +100,8 @@ export function JobHistory({
   }
 
   return (
-    <ul className="divide-y divide-slate-200 overflow-hidden rounded-lg border border-slate-200">
+    <>
+      <ul className="divide-y divide-slate-200 overflow-hidden rounded-lg border border-slate-200">
       {jobs.map((job) => {
         const isActive = job.jobId === activeJobId;
         const isLoading = job.jobId === loadingJobId;
@@ -136,6 +148,41 @@ export function JobHistory({
           </li>
         );
       })}
-    </ul>
+      </ul>
+
+      {/*
+        Shown only when there is more than one page. A pager under a list that
+        fits on one page is furniture, not information.
+      */}
+      {total > limit && (
+        <nav
+          aria-label="Upload history pages"
+          className="mt-2 flex items-center justify-between gap-3"
+        >
+          <p className="text-xs tabular-nums text-slate-500">
+            {first}–{last} of {total}
+          </p>
+
+          <div className="flex gap-2">
+            <button
+              type="button"
+              disabled={!hasPrev}
+              onClick={() => onPage(Math.max(0, offset - limit))}
+              className="cursor-pointer rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-default disabled:opacity-40"
+            >
+              Newer
+            </button>
+            <button
+              type="button"
+              disabled={!hasNext}
+              onClick={() => onPage(offset + limit)}
+              className="cursor-pointer rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-default disabled:opacity-40"
+            >
+              Older
+            </button>
+          </div>
+        </nav>
+      )}
+    </>
   );
 }
