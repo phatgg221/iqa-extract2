@@ -51,6 +51,34 @@ describe('reading the result of a claim', () => {
   });
 });
 
+describe('storing a result', () => {
+  test('the count columns are a convenience, not a dependency', () => {
+    // Found on the deployed service: the consumer read KBS-10234 perfectly and
+    // then failed to store it, because the write included line_item_count and
+    // migration 0004 had not been applied. The summary columns took the whole
+    // result down with them.
+    //
+    // This pins the shape of the guard rather than the database call: the
+    // retry fires for exactly the two column names and nothing else, so a
+    // genuine write failure is still reported rather than silently retried.
+    const missingColumns = /line_item_count|refusal_count/;
+
+    expect(
+      missingColumns.test(
+        "Could not find the 'line_item_count' column of 'extraction_jobs' in the schema cache",
+      ),
+    ).toBe(true);
+    expect(
+      missingColumns.test("Could not find the 'refusal_count' column of 'extraction_jobs'"),
+    ).toBe(true);
+
+    // Not a missing column: these must still fail the job rather than retry.
+    expect(missingColumns.test('duplicate key value violates unique constraint')).toBe(false);
+    expect(missingColumns.test('permission denied for table extraction_jobs')).toBe(false);
+    expect(missingColumns.test('could not serialize access due to concurrent update')).toBe(false);
+  });
+});
+
 describe('what the browser is told', () => {
   test('a failed job always carries a reason, even if none was recorded', () => {
     const response = toStatusResponse(row({ status: 'failed' }));

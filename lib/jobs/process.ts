@@ -213,20 +213,37 @@ async function runWithBroadcast(
     return;
   }
 
-  const { error: saveError } = await admin()
-    .from('extraction_jobs')
-    .update({
-      status: 'succeeded',
-      result,
-      page_count: result.pageCount,
-      pages_done: result.pageCount,
-      // Stored so the history list can show "24 items, 3 refusals" without
-      // loading a result that may be megabytes.
-      line_item_count: result.lineItems.length,
-      refusal_count: result.refusals.length,
-      finished_at: new Date().toISOString(),
-    })
-    .eq('id', job.id);
+  // The result is the valuable thing; the counts are a convenience for the
+  // history list. Kept separate so a missing column can never cost us a
+  // document we already read — see the retry below.
+  const core = {
+    status: 'succeeded' as const,
+    result,
+    page_count: result.pageCount,
+    pages_done: result.pageCount,
+    finished_at: new Date().toISOString(),
+  };
+  const counts = {
+    line_item_count: result.lineItems.length,
+    refusal_count: result.refusals.length,
+  };
+
+  const save = (payload: object) =>
+    admin().from('extraction_jobs').update(payload).eq('id', job.id);
+
+  let { error: saveError } = await save({ ...core, ...counts });
+
+  // Migration 0004 adds the count columns. Without it the write above fails,
+  // and the first version of this threw away a document that had been read
+  // perfectly — the summary columns took the result down with them. Writing
+  // the result without them is strictly better than losing it.
+  if (saveError && /line_item_count|refusal_count/.test(saveError.message)) {
+    console.warn(
+      `[${job.id}] the count columns are missing (apply migration 0004); ` +
+        `storing the result without them`,
+    );
+    ({ error: saveError } = await save(core));
+  }
 
   if (saveError) {
     await markFailed(
