@@ -81,6 +81,24 @@ describe('a scanned page, with OCR switched on', () => {
     expect(result.refusals.filter((r) => r.code === 'LINE_ARITHMETIC_MISMATCH')).toEqual([]);
   }, 120000);
 
+  test('still refuses a document total once the eighth page is readable', async () => {
+    const result = await extract(bytes('KBS-DR118.pdf'), 'KBS-DR118.pdf', {
+      ocr: tesseractOcr(),
+    });
+
+    // Reading page 4 makes the naive sum *more* plausible, not less: all eight
+    // pages now carry an identical $669.00, so 8 x 669 = $5,352.00 is the
+    // tempting wrong answer. It is wrong because page 5 is a summary, pages 6
+    // and 7 are a returns note and a credit adjustment, and page 8 is a
+    // signed acceptance. None of that changes because a page became readable.
+    expect(result.documentTotal).toBeNull();
+    expect(JSON.stringify(result)).not.toContain('5352');
+
+    const codes = result.refusals.map((r) => r.code);
+    expect(codes).toContain('DOCUMENT_TOTAL_ABSENT');
+    expect(codes).toContain('POSSIBLE_DUPLICATE_PAGE');
+  }, 120000);
+
   test('quotes what OCR saw, not what we wish it saw', async () => {
     const result = await extract(bytes('KBS-DR118.pdf'), 'KBS-DR118.pdf', {
       ocr: tesseractOcr(),

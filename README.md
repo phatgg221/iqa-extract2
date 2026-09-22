@@ -10,7 +10,7 @@ be pointed at on the page.** Refusing is a result. Guessing is not.
 ```bash
 npm install
 npm run dev     # http://localhost:3000
-npm test        # 47 tests, mostly about refusals
+npm test        # 48 tests, mostly about refusals
 ```
 
 Six sample documents are bundled and can be run from the page itself without
@@ -18,7 +18,10 @@ finding a file first.
 
 ---
 
-## What it does with the samples
+## What the samples turned out to contain
+
+Working out what was actually in each document took as long as building the
+extractor, and the design followed from it. Every one carries a specific trap.
 
 | Document | Result |
 |---|---|
@@ -29,11 +32,52 @@ finding a file first.
 | `KBS-10270` | 4 line items extracted. The printed total is $1,612.90, the lines add to $1,538.20; no total is reported and both figures are shown. |
 | `KBS-DR118` | 8 pages. Page 4 is a scan: refused by default (21 line items), read by OCR when enabled (24). No document total either way, for the stated reasons. |
 
-`KBS-DR118` is the one worth opening. Summing its readable pages gives
-$4,683.00, which is wrong at least three ways over — page 5 is a summary that
-restates earlier pages, pages 6 and 7 are a returns note and a credit
-adjustment whose sign is never stated, and page 4 cannot be read at all. The
-service reports no total and says all four things.
+### KBS-DR118, in detail
+
+This is the document the whole design is aimed at. Eight pages, and **every
+single one carries the identical $669.00** — the same three lines at
+10 @ $16.00, 13 @ $17.00, 16 @ $18.00:
+
+```
+p1  $669.00  Site 1 of 4 - Ranfurly Ave
+p2  $669.00  Site 2 of 4 - Ranfurly Ave     <- same street as Site 1
+p3  $669.00  Site 3 of 4 - Beach Road
+p4  $669.00  (a scan; readable only by OCR)
+p5  $669.00  Summary - Batch Delivery Run 118
+p6  $669.00  Returns Note
+p7  $669.00  Credit Adjustment
+p8  $669.00  Signed Acceptance
+```
+
+No page prints a total, and no document total is printed anywhere.
+
+Adding it up gives **$5,352.00**, and that figure is wrong for at least five
+independent reasons:
+
+1. **Page 5 is a summary.** A summary restates the site pages, so adding it
+   counts the same delivery twice.
+2. **Page 6 is a returns note and page 7 a credit adjustment.** That is money
+   going *back*. It should reduce the total — but the document never states a
+   sign and prints both as positives, so subtracting would be as much a guess
+   as adding.
+3. **Page 8 is a signed acceptance**, which is a signature copy of a delivery
+   rather than a fifth delivery.
+4. **Sites 1 and 2 are separate drops at the same street.** Either one is
+   mislabelled or the same delivery appears twice.
+5. **All eight pages match to the cent.** Four sites receiving byte-identical
+   orders is possible; eight pages restating one delivery is likelier.
+
+So the defensible answer is somewhere between **$669.00** (one delivery,
+restated eight times) and **$5,352.00** (eight genuine deliveries), and nothing
+in the document settles it. A quoting tool that picked any figure in that range
+would be confidently wrong by up to eight times.
+
+The service reports **no document total** and states every one of those reasons
+in plain language, while still returning all 24 line items with their evidence
+so a person can total whichever pages they judge to be real. That is the whole
+argument of the project in one document: the extraction is easy, knowing what
+the extraction *means* is not, and the honest move is to hand back what is
+printed plus the reasons you cannot add it up.
 
 ## How it works
 

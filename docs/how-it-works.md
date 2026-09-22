@@ -597,7 +597,7 @@ failed"*.
 
 ## Tests
 
-47 across three files, run with `npm test`.
+48 across three files, run with `npm test`.
 
 | File | Covers |
 |---|---|
@@ -615,8 +615,9 @@ for (const number of tracedNumbers(result)) {
 ```
 
 That enforces the rule structurally rather than field by field. Several others
-assert the *absence* of tempting wrong answers — `4683` (summing DR118's
-readable pages), `2002.4` (the scanned total, when OCR is off), `108` and `272`
+assert the *absence* of tempting wrong answers — `4683` (summing DR118's seven
+readable pages), `5352` (summing all eight, once OCR makes the eighth
+readable), `2002.4` (the scanned total, when OCR is off), and `108` and `272`
 (qty × price where no line total is printed).
 
 ---
