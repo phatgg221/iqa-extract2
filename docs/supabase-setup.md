@@ -8,9 +8,13 @@ This is how to turn it on.
 > tests pass, and `KBS-10241`, `KBS-10255`, `KBS-10262` and `KBS-DR118` were
 > each run through the real pipeline.
 >
-> Two things are still **unproven**: the Vercel Queues push consumer (the runs
-> above were drained by the polling worker), and any of it deployed rather than
-> local.
+> **Also verified on the deployed service** at https://iqa-extract.vercel.app:
+> upload, Vercel Queues push delivery, the consumer reading the document, and
+> the result on screen. Scanned pages are refused there, as designed — OCR runs
+> only in the local worker.
+>
+> Still unobserved: a redelivery, a duplicate delivery, or a consumer crashing
+> mid-document in production.
 
 ---
 

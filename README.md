@@ -7,11 +7,17 @@ list of everything it declined to extract and why.
 The rule the whole thing is built around: **no number is published unless it can
 be pointed at on the page.** Refusing is a result. Guessing is not.
 
+**Live:** https://iqa-extract.vercel.app
+
 ```bash
 npm install
 npm run dev     # http://localhost:3000
-npm test        # 48 tests, mostly about refusals
+npm test        # 49 tests, mostly about refusals
 ```
+
+The deployed service reads text-layer PDFs but **refuses scanned pages**, and
+says so — OCR runs only in the local worker, for a reason given below. Run it
+locally to see a scan read.
 
 Six sample documents are bundled and can be run from the page itself without
 finding a file first.
@@ -257,6 +263,38 @@ browser finished subscribing, or during a reconnect, is simply gone. Realtime
 alone would be *less* reliable than polling. The order is: subscribe, read once
 to catch anything already missed, then let broadcasts drive it.
 
+### Why this shape holds up with more people using it
+
+The point of moving off a single request was correctness under large files, but
+the same shape is what makes more users cheap rather than expensive:
+
+- **Uploads never touch compute.** The bytes go browser → storage on a signed
+  token, so upload throughput is a storage problem, not a function-capacity
+  one. Twenty people uploading 20 MB files cost the API twenty small JSON
+  requests.
+- **Work is claimed, not assigned.** `FOR UPDATE SKIP LOCKED` means you add
+  consumers and they sort themselves out — no partitioning, no rebalancing, no
+  leader. Two consumers or twenty run the same code, and a duplicate delivery
+  is already handled because claiming is atomic.
+- **The push consumer scales per message.** One invocation per document, so a
+  burst is absorbed by the platform rather than queued behind one worker.
+- **Realtime removes the load that grows with users.** Polling costs
+  *users × duration ÷ interval* requests forever; broadcast costs about two per
+  job no matter how many people are watching. That is the difference between a
+  page that gets more expensive as the team grows and one that does not.
+- **The job row is the queue and the audit trail at once.** Every upload leaves
+  a durable record of what was read, what was refused and why — which is what
+  you want anyway the first time a customer disputes a quote.
+
+What it would still need before more than one person used it, in order:
+
+1. **Auth, an owner column and RLS policies.** Today any caller can read any
+   job and list all of them. This is the blocker, not a nice-to-have.
+2. **Back-pressure and per-tenant rate limits**, so one customer's 500-page
+   batch cannot starve everyone else.
+3. **Cursor paging** on the history, since offset drifts under constant inserts.
+4. **A retention policy**, because customer PDFs now persist in a bucket.
+
 ### What the queue does not fix
 
 - **A single enormous page still has to fit in memory.** Streaming helps across
@@ -311,11 +349,21 @@ something surprised me in production.
 
 **The infrastructure**
 
-- **The Vercel Queues push consumer has never run.** Every end-to-end run I
-  verified was drained by the polling worker. The claim logic that makes
-  at-least-once delivery safe is therefore reasoned about and unit-tested, not
-  observed. Queues is also in public beta and `experimentalTriggers` is named
+- **The deployed path works, but has only been run a handful of times.** I
+  drove documents through https://iqa-extract.vercel.app end to end and the
+  Vercel Queues consumer read them correctly. What is still unobserved is
+  everything past the happy path: I have never seen a redelivery, a duplicate,
+  or a consumer crash mid-document in production, so the claim logic that makes
+  at-least-once delivery safe is unit-tested and reasoned about rather than
+  watched. Queues is also in public beta and `experimentalTriggers` is named
   that for a reason — the polling worker exists partly as insurance.
+- **Two consumers racing is real, not theoretical.** While testing prod I had
+  local workers still polling the same database, and they silently won some
+  jobs — which produced a *better* result than the deployed consumer, because
+  they have OCR on. Nothing was corrupted, since claiming is atomic, but it
+  means "which consumer read this document" is currently invisible in the
+  output. A consumer id on the job row would fix that and I would add it before
+  running two for real.
 - **OCR does not run in production at all.** Tesseract does its work in a
   spawned worker thread, which never starts inside a Next.js route handler; the
   call simply never returns. So scans are read locally by the worker and refused
