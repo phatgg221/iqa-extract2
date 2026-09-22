@@ -16,8 +16,14 @@ npm test        # 49 tests, mostly about refusals
 ```
 
 The deployed service reads text-layer PDFs but **refuses scanned pages**, and
-says so — OCR runs only in the local worker, for a reason given below. Run it
-locally to see a scan read.
+says so on screen. OCR could not be made to work on Vercel — the reason is
+below. To see a scan read (`KBS-10241`, or page 4 of `KBS-DR118`), run it
+locally, where OCR works:
+
+```bash
+npm run dev      # one terminal
+npm run worker   # another; this is where OCR runs
+```
 
 Six sample documents are bundled and can be run from the page itself without
 finding a file first.
@@ -364,19 +370,33 @@ something surprised me in production.
   means "which consumer read this document" is currently invisible in the
   output. A consumer id on the job row would fix that and I would add it before
   running two for real.
-- **OCR does not run in production, and I could not make it.** Tesseract starts
-  its engine in a spawned worker thread and `createWorker` never returns on
-  Vercel. I tried three fixes against the real deployment: tracing its worker
-  script and WASM core into the function (it loads both by runtime path, exactly
-  the bug I had already fixed once for pdfjs), pointing its cache at a writable
-  directory instead of the read-only working directory, and raising the page
-  timeout to 150s in case a cold process simply needed longer. The first two are
-  necessary and kept; none of them was sufficient, and 150s hung as surely as
-  60s. So scans are read by the local worker and refused on Vercel. **This is
-  the single biggest gap in the submission**, and the fix is either to run the
-  worker on a host that allows long-lived processes — which needs no code
-  changes at all — or to implement `OcrFn` against a hosted OCR API, which is
-  one function.
+- **OCR does not work on Vercel, and I could not make it.** This is the single
+  biggest gap in the submission. Tesseract starts its engine in a spawned
+  worker thread, and `createWorker` never returns there. It hangs rather than
+  errors, which is what made it slow to diagnose.
+
+  I did find a real bug while chasing it. Tesseract derives its worker path
+  from `__dirname`, and the bundler inlines that as the **build machine's**
+  directory, so the deployed function called
+  `new Worker("/ROOT/node_modules/tesseract.js/…")` while the file actually sat
+  in `/var/task/…`. A Worker over a missing file never comes up. That is fixed
+  — the package is external and the path is resolved through the module system
+  — and it explains why merely tracing the files changed nothing: they were
+  deployed to one path while the code looked at another.
+
+  **It still hangs after that fix.** The runtime logs show no tesseract output
+  at all, not even its own `Load eng.traineddata` line, so the thread never
+  runs any code. My remaining hypothesis is that `worker_threads` does not
+  function in that runtime, but I have not demonstrated it, and I would rather
+  say that than present a guess as a finding. Ruled out along the way: missing
+  files (verified in the trace manifest), a read-only cache directory (fixed,
+  and correct everywhere), and a slow cold start (150s hung exactly as 60s did).
+
+  Two routes would fix it, neither taken: run the worker on a host that allows
+  long-lived processes, which needs **no code change** because `npm run worker`
+  already does OCR correctly; or implement `OcrFn` against a hosted OCR API,
+  which is one function and involves no worker threads. `OcrFn` is a
+  single-function interface precisely so the engine can be swapped.
 - **Nothing was load-tested.** One worker, one document at a time. I have never
   had two consumers race for the same job outside a unit test, and the test I
   would write first is "two concurrent deliveries of one job id produce exactly
