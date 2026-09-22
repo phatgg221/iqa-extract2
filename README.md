@@ -364,14 +364,19 @@ something surprised me in production.
   means "which consumer read this document" is currently invisible in the
   output. A consumer id on the job row would fix that and I would add it before
   running two for real.
-- **OCR does not run in production, and I have tested that rather than assumed
-  it.** Tesseract does its work in a spawned worker thread. I first saw it hang
-  in `next dev` and inferred the deployed runtime would behave the same, which
-  was an assumption; enabling `OCR_ENABLED` on Vercel and pushing the eight-page
-  document through confirmed it — the job stalled at page 3 of 8, exactly where
-  it reaches the scan, and never moved. So scans are read by the local worker
-  and refused on Vercel. The deployed service is meaningfully less capable than
-  the local one, which is the single biggest gap in this submission.
+- **OCR does not run in production, and I could not make it.** Tesseract starts
+  its engine in a spawned worker thread and `createWorker` never returns on
+  Vercel. I tried three fixes against the real deployment: tracing its worker
+  script and WASM core into the function (it loads both by runtime path, exactly
+  the bug I had already fixed once for pdfjs), pointing its cache at a writable
+  directory instead of the read-only working directory, and raising the page
+  timeout to 150s in case a cold process simply needed longer. The first two are
+  necessary and kept; none of them was sufficient, and 150s hung as surely as
+  60s. So scans are read by the local worker and refused on Vercel. **This is
+  the single biggest gap in the submission**, and the fix is either to run the
+  worker on a host that allows long-lived processes — which needs no code
+  changes at all — or to implement `OcrFn` against a hosted OCR API, which is
+  one function.
 - **Nothing was load-tested.** One worker, one document at a time. I have never
   had two consumers race for the same job outside a unit test, and the test I
   would write first is "two concurrent deliveries of one job id produce exactly

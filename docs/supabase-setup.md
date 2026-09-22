@@ -263,15 +263,35 @@ it ten minutes later. So:
 OCR is also bounded to 60 seconds per page, so even if the engine does wedge,
 the page becomes a refusal rather than a hung job.
 
-This was confirmed on the real deployment, not just inferred from local
-behaviour: with `OCR_ENABLED=true` on Vercel, the eight-page sample stalled at
-page 3 of 8 — exactly where it reaches the scan — and never progressed. The
-variable has since been removed.
+This was confirmed on the real deployment, not inferred from local behaviour,
+and two plausible fixes were tried and ruled out:
 
-Enabling it there would need a build of tesseract that does not depend on
-worker threads, plus the language data bundled into the function (otherwise
-every cold start re-downloads roughly 15 MB), or a hosted OCR API called over
-HTTP instead.
+| Tried | Result |
+|---|---|
+| Trace `tesseract.js/src` and `tesseract.js-core` into the function, since it loads its worker by runtime path exactly as pdfjs does | Files verified present in the `.nft.json`. Still hung. |
+| Point `cachePath` at the system temp dir, since tesseract writes ~12 MB of language data to the working directory, which is read-only on Vercel | Correct fix regardless — kept — but not sufficient. |
+| Raise the page timeout from 60s to 150s, in case a cold process just needed longer to load the WASM core and fetch the language data | Timed out at 150s too, so it is a hang rather than slowness. |
+
+So `createWorker` does not return on Vercel for a reason beyond missing files or
+a read-only cache. Both kept changes are correct everywhere, and the timeout is
+what turns the hang into a bounded refusal rather than a job stuck in
+`processing`.
+
+### Getting OCR onto a deployment
+
+Two paths that work, in order of effort:
+
+1. **Run the worker on a host that allows a long-lived process** — Railway,
+   Render or Fly. **Zero code changes**: `npm run worker` already does OCR
+   correctly, and it claims jobs from the same table, so the Vercel app keeps
+   serving the page and the API. This is the recommended route.
+2. **Swap tesseract for a hosted OCR API** — Google Vision, Azure Document
+   Intelligence, or similar. No worker threads at all, so it runs in a
+   serverless function. `OcrFn` is a one-function interface
+   (`(raster) => Promise<TextCell[]>`), so this is a new implementation of
+   `lib/extract/ocr.ts` and nothing else; the confidence and bounding boxes
+   those APIs return map onto `TextCell` the same way tesseract's do. Adds a
+   vendor and a per-page cost.
 
 ## What production does and does not do
 
