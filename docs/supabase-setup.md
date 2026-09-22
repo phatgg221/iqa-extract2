@@ -263,9 +263,15 @@ it ten minutes later. So:
 OCR is also bounded to 60 seconds per page, so even if the engine does wedge,
 the page becomes a refusal rather than a hung job.
 
-Enabling it on the serverless consumer would need a build of tesseract that
-does not depend on worker threads, plus the language data bundled into the
-function — otherwise every cold start re-downloads roughly 15 MB.
+This was confirmed on the real deployment, not just inferred from local
+behaviour: with `OCR_ENABLED=true` on Vercel, the eight-page sample stalled at
+page 3 of 8 — exactly where it reaches the scan — and never progressed. The
+variable has since been removed.
+
+Enabling it there would need a build of tesseract that does not depend on
+worker threads, plus the language data bundled into the function (otherwise
+every cold start re-downloads roughly 15 MB), or a hosted OCR API called over
+HTTP instead.
 
 ## What production does and does not do
 

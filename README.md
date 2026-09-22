@@ -364,12 +364,14 @@ something surprised me in production.
   means "which consumer read this document" is currently invisible in the
   output. A consumer id on the job row would fix that and I would add it before
   running two for real.
-- **OCR does not run in production at all.** Tesseract does its work in a
-  spawned worker thread, which never starts inside a Next.js route handler; the
-  call simply never returns. So scans are read locally by the worker and refused
-  on Vercel. The refusal says which of the two it is, but it means the deployed
-  service is meaningfully less capable than the local one, and I found that out
-  by having a job hang rather than by reading a doc.
+- **OCR does not run in production, and I have tested that rather than assumed
+  it.** Tesseract does its work in a spawned worker thread. I first saw it hang
+  in `next dev` and inferred the deployed runtime would behave the same, which
+  was an assumption; enabling `OCR_ENABLED` on Vercel and pushing the eight-page
+  document through confirmed it — the job stalled at page 3 of 8, exactly where
+  it reaches the scan, and never moved. So scans are read by the local worker
+  and refused on Vercel. The deployed service is meaningfully less capable than
+  the local one, which is the single biggest gap in this submission.
 - **Nothing was load-tested.** One worker, one document at a time. I have never
   had two consumers race for the same job outside a unit test, and the test I
   would write first is "two concurrent deliveries of one job id produce exactly

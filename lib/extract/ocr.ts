@@ -180,11 +180,6 @@ const PAGE_TIMEOUT_MS = 60_000;
 export function tesseractOcr(): OcrFn {
   return async (raster: PageRaster): Promise<TextCell[]> => {
     const png = encodeGrayPng(raster.width, raster.height, raster.gray);
-    const w = await worker();
-
-    const recognition = w
-      .recognize(png, {}, { blocks: true })
-      .then(({ data }) => wordsToCells(collectWords(data), raster));
 
     let timer: NodeJS.Timeout | undefined;
     const timeout = new Promise<never>((_, reject) => {
@@ -194,8 +189,27 @@ export function tesseractOcr(): OcrFn {
       );
     });
 
+    // Starting the engine is inside the race, not before it.
+    //
+    // The first version awaited `worker()` on the line above and only raced
+    // the recognition, which bounded the wrong half: `createWorker` is what
+    // spawns the worker thread, and that is the call that never returns in a
+    // serverless runtime. A deployed job sat in `processing` for five minutes
+    // with a 60s timeout armed that had not started yet.
+    const read = (async () => {
+      const w = await worker();
+      const { data } = await w.recognize(png, {}, { blocks: true });
+      return wordsToCells(collectWords(data), raster);
+    })();
+
     try {
-      return await Promise.race([recognition, timeout]);
+      return await Promise.race([read, timeout]);
+    } catch (err) {
+      // A pending `createWorker` stays cached and would hang every later page
+      // too. Dropping it means the next page gets a fresh attempt rather than
+      // awaiting a promise that will never settle.
+      shared = null;
+      throw err;
     } finally {
       clearTimeout(timer);
     }

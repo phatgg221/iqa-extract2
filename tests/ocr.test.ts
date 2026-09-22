@@ -113,6 +113,37 @@ describe('a scanned page, with OCR switched on', () => {
   }, 120000);
 });
 
+describe('an OCR engine that never starts', () => {
+  test('becomes a refusal on that page, not a job that hangs forever', async () => {
+    // The real failure, reproduced: in a serverless runtime `createWorker`
+    // never returns, so the call that hangs is starting the engine rather than
+    // reading the page. The first version of the timeout awaited the engine
+    // *before* arming the clock, so a deployed job sat in `processing` for
+    // five minutes with a 60s timeout that had not started yet.
+    const neverStarts = () => new Promise<never>(() => {});
+
+    const result = await extract(bytes('KBS-DR118.pdf'), 'KBS-DR118.pdf', {
+      ocr: async () => {
+        // Bounded here so the test cannot hang if the guard regresses; in the
+        // engine the same shape is a 60s race around worker creation.
+        return Promise.race([
+          neverStarts(),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('OCR did not finish within 60s')), 50),
+          ),
+        ]);
+      },
+    });
+
+    // The page is refused with the reason, and the rest of the document is
+    // unaffected — a stalled engine costs one page, not the job.
+    const refusal = result.refusals.find((r) => r.code === 'NO_TEXT_LAYER')!;
+    expect(refusal.humanMessage).toMatch(/did try to read it from the image/i);
+    expect(refusal.humanMessage).toContain('did not finish within 60s');
+    expect(result.lineItems).toHaveLength(21);
+  }, 60000);
+});
+
 describe('the refusal on a page we could not read', () => {
   test('says OCR is not switched on, when it is not', async () => {
     const result = await extract(bytes('KBS-DR118.pdf'), 'KBS-DR118.pdf');
