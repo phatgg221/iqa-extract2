@@ -13,6 +13,8 @@
  * refuse the weak ones and the screen can say which figures were guessed at.
  */
 
+import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import os from 'node:os';
 import { createWorker, type Worker } from 'tesseract.js';
 import { encodeGrayPng } from './png';
@@ -68,8 +70,45 @@ let shared: Promise<Worker> | null = null;
  * that will refuse it. The system temp directory is the one place guaranteed
  * writable, and it is correct locally too.
  */
+/**
+ * Resolves tesseract's worker script ourselves rather than letting it derive
+ * the path from `__dirname`.
+ *
+ * Its own default is `path.join(__dirname, '..', '..', 'worker-script', ...)`,
+ * and a bundler inlines `__dirname` as the *build machine's* directory — so a
+ * deployed function looked for the script under `/ROOT/...` while the file sat
+ * in `/var/task/...`. `new Worker` over a missing file never comes up and
+ * `createWorker` never settles, which is a hang rather than an error.
+ *
+ * Returns null when it cannot be found, so the caller can say that plainly
+ * instead of waiting on a worker that will never start.
+ */
+function resolveWorkerScript(): { path: string | null; detail: string } {
+  try {
+    const require_ = createRequire(import.meta.url);
+    const resolved = require_.resolve('tesseract.js/src/worker-script/node/index.js');
+    return fs.existsSync(resolved)
+      ? { path: resolved, detail: resolved }
+      : { path: null, detail: `resolved to ${resolved}, which does not exist` };
+  } catch (err) {
+    return {
+      path: null,
+      detail: `could not be resolved (${err instanceof Error ? err.message : String(err)})`,
+    };
+  }
+}
+
 function worker(): Promise<Worker> {
-  shared ??= createWorker('eng', 1, { cachePath: os.tmpdir() });
+  shared ??= (async () => {
+    const script = resolveWorkerScript();
+    if (!script.path) {
+      throw new Error(`the OCR engine's worker script ${script.detail}`);
+    }
+    return createWorker('eng', 1, {
+      cachePath: os.tmpdir(),
+      workerPath: script.path,
+    });
+  })();
   return shared;
 }
 
