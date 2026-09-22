@@ -5,15 +5,6 @@ import { EvidenceQuote } from './Evidence';
 import { PageItems } from './LineItems';
 import { RefusalList } from './RefusalList';
 
-function Meta({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</dt>
-      <dd className="text-sm text-slate-900">{value}</dd>
-    </div>
-  );
-}
-
 /**
  * The document total is the figure a person will act on, so it gets the only
  * large number on the page - and when it is withheld, the space it would have
@@ -59,29 +50,12 @@ function DocumentTotal({ result }: { result: ExtractionResult }) {
 }
 
 export function ResultView({ result }: { result: ExtractionResult }) {
-  const readablePages = result.pages.filter((p) => p.extracted).length;
   const readByOcr = result.lineItems.some(
     (i) => i.description.evidence.source === 'ocr',
   );
 
   return (
     <div className="space-y-6">
-      <section className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
-        <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
-          <dl className="flex flex-wrap gap-x-10 gap-y-3">
-            <Meta label="File" value={result.fileName} />
-            <Meta label="Document no." value={result.documentNumber?.value ?? 'not printed'} />
-            <Meta label="Date" value={result.documentDate?.value ?? 'not printed'} />
-            <Meta
-              label="Pages read"
-              value={`${readablePages} of ${result.pageCount}`}
-            />
-            <Meta label="Line items" value={String(result.lineItems.length)} />
-          </dl>
-          <CopyJson result={result} />
-        </div>
-      </section>
-
       <DocumentTotal result={result} />
 
       {/*
@@ -89,10 +63,13 @@ export function ResultView({ result }: { result: ExtractionResult }) {
         appendix to the result; for some documents it is the entire result.
       */}
       <section>
-        <h2 className="mb-3 text-base font-semibold text-slate-900">
-          Extracted ({result.lineItems.length}{' '}
-          {result.lineItems.length === 1 ? 'line item' : 'line items'})
-        </h2>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+          <h2 className="text-base font-semibold text-slate-900">
+            Extracted ({result.lineItems.length}{' '}
+            {result.lineItems.length === 1 ? 'line item' : 'line items'})
+          </h2>
+          <CopyJson result={result} />
+        </div>
         {result.lineItems.length === 0 ? (
           <p className="rounded-lg border border-slate-200 px-4 py-3 text-sm text-slate-600">
             Nothing could be extracted from this document. The reasons are listed
