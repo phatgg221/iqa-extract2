@@ -10,7 +10,7 @@ be pointed at on the page.** Refusing is a result. Guessing is not.
 ```bash
 npm install
 npm run dev     # http://localhost:3000
-npm test        # 40 tests, mostly about refusals
+npm test        # 47 tests, mostly about refusals
 ```
 
 Six sample documents are bundled and can be run from the page itself without
@@ -42,14 +42,21 @@ the measured constants — is in [docs/how-it-works.md](docs/how-it-works.md).
 The short version:
 
 ```
-app/api/extract/route.ts   HTTP boundary
 lib/extract/pdf.ts         PDF -> positioned text cells (the only pdfjs-aware file)
 lib/extract/ocr.ts         scanned page -> the same cells, tagged as OCR
 lib/extract/png.ts         raw pixels -> PNG, so OCR needs no native canvas
 lib/extract/table.ts       cells -> columns and rows, per page
 lib/extract/rules.ts       the refusal rules
 lib/extract/extract.ts     orchestration, containment, the document-total decision
-app/components/            upload, results, refusals
+
+app/api/extract/route.ts   synchronous route (small files, and the tests)
+app/api/jobs/*             create, mark uploaded, status, history
+app/api/queues/extract/    Vercel Queues push consumer
+worker/index.ts            polling consumer, for local and off-Vercel
+lib/jobs/*                 the job contract, the work, the browser flow
+supabase/migrations/       jobs table, claim + reap functions, bucket
+
+app/components/            upload, history, results, refusals
 ```
 
 Extraction is deterministic and geometric. `pdfjs-dist` gives each table cell
@@ -113,9 +120,113 @@ opened gets an error status, and the body still carries a real reason.
 Every refusal's `humanMessage` is written where the problem is found, because
 that is the only place the context still exists. The UI renders it verbatim.
 
-The result header has **Copy JSON** and **Download**, which hand back the API
+**Copy JSON** and **Download** sit beside the results and hand back the API
 response exactly as it was returned — refusals included — so what is on screen
 can be checked against what was actually sent.
+
+---
+
+## How this evolved, and what each step was for
+
+Worth reading before the three questions, because most of what I am unsure
+about lives in this part rather than in the parser.
+
+### v1 — the file goes through the API
+
+`POST /api/extract`, multipart, parse inline, return JSON. That is what the
+brief asks for and it is the right shape for a 2 KB docket. It still exists,
+still works, and the 47 tests still cover that path.
+
+### What broke as files grew
+
+Four ceilings, in the order a growing file hits them:
+
+| # | Ceiling | What the user sees |
+|---|---|---|
+| 1 | **Vercel refuses request bodies over ~4.5 MB** | Rejected by the platform *before our code runs* |
+| 2 | Function timeout | Connection dies mid-parse; no partial result, no reason |
+| 3 | Whole file plus every page held in memory | The function runs out of memory |
+| 4 | Single request/response | A spinner for minutes with nothing behind it |
+
+**Ceiling 1 is the one that actually bites, and it is invisible.** Our own
+`MAX_BYTES` check never gets to run, so the specific message *"your file is too
+big"* is replaced by a generic platform error on the way out. That is this
+project's own thesis biting the project, one layer below where I was looking
+for it — which is exactly why it is worth fixing properly rather than raising a
+limit.
+
+### v2 — the file stops going through the API
+
+Three changes, each removing one ceiling:
+
+- **A signed upload token.** The browser asks for one, then PUTs the PDF
+  straight into a Supabase Storage bucket. Our function only ever handles a few
+  hundred bytes of JSON, so **ceiling 1 disappears** — not is raised, disappears.
+- **A `extraction_jobs` row is the queue.** A consumer claims it with
+  `FOR UPDATE SKIP LOCKED`, downloads from the bucket, and runs the same
+  engine. The consumer is not a request, so **ceilings 2 and 3 disappear**.
+- **Per-page progress** written as it goes, so **ceiling 4 disappears**.
+
+`lib/extract/` did not change for any of this, apart from one additive option:
+`extract()` gained an optional `onPage` callback. The engine is plain
+TypeScript with one dependency, so a worker imports it exactly as a route
+handler does, and the tested behaviour carried over untouched.
+
+### v3 — push instead of poll, for the consumer
+
+The first version discovered work by polling the table every two seconds. That
+is a real process doing real work, but it needs somewhere to run, and Vercel has
+no long-lived processes.
+
+So the deployed consumer is a **Vercel Queues** push callback — a route handler
+bound to a topic, with no public URL. Delivery is *at least once*, which is the
+detail that matters: the consumer never starts work because a message arrived,
+it starts work because it **won an atomic claim**. A duplicate delivery gets no
+row back and returns without touching the document; a redelivery after a crash
+wins it, because a stale `processing` row is exactly what a retry is for.
+
+The polling worker stays, because Queues is beta and because OCR only runs
+there. Both call the same `runClaimedJob`, so they cannot drift.
+
+### v4 — push instead of poll, for the browser
+
+The page polled `GET /api/jobs/{id}` every 1.5s. A push queue does not fix that:
+Vercel calling our function is server-to-server and tells the browser nothing.
+
+So the browser subscribes to a **Supabase Realtime** broadcast channel named
+after the job id, and the consumer publishes a small signal on every transition.
+Measured on the eight-page sample: **2 HTTP requests for the whole job** instead
+of about 5, with progress arriving every ~0.35s instead of every 1.5s — fast
+enough to actually watch each page tick past.
+
+Two decisions inside that are worth more than the speed:
+
+**Broadcast, not `postgres_changes`.** Postgres changes are filtered by RLS, and
+`extraction_jobs` has RLS on with no policies. Opening it for reads would hand
+every document's extracted contents to anyone holding the publishable key. A
+channel keyed by the job's UUID is capability-based — knowing the id is already
+exactly what the status endpoint requires.
+
+**A 10s backstop poll remains, and it is required rather than defensive.**
+Broadcast is fire-and-forget with no replay, so a message sent before the
+browser finished subscribing, or during a reconnect, is simply gone. Realtime
+alone would be *less* reliable than polling. The order is: subscribe, read once
+to catch anything already missed, then let broadcasts drive it.
+
+### What the queue does not fix
+
+- **A single enormous page still has to fit in memory.** Streaming helps across
+  pages, not within one.
+- **No resumability.** A consumer dying on page 180 of 200 restarts at page 1,
+  because the result is one blob written at the end.
+- **No back-pressure.** Nothing stops a hundred uploads queueing at once.
+- **Storage and retention.** Customer PDFs now persist in a bucket rather than
+  living for one request. That is a data-retention decision, not just an
+  engineering one.
+
+The full design note, including the sequence diagram and the open questions, is
+in [docs/async-extraction.md](docs/async-extraction.md); how to run it is in
+[docs/supabase-setup.md](docs/supabase-setup.md).
 
 ---
 
@@ -148,6 +259,48 @@ cannot tell which, and a warning next to a populated field gets dismissed in a
 way that an empty field does not.
 
 ### Where I'm not confident
+
+Two groups, because they are different kinds of doubt. The parser I have tested
+hard against six documents and trust within those limits. The infrastructure
+around it I have exercised far less, and that is where I would look first if
+something surprised me in production.
+
+**The infrastructure**
+
+- **The Vercel Queues push consumer has never run.** Every end-to-end run I
+  verified was drained by the polling worker. The claim logic that makes
+  at-least-once delivery safe is therefore reasoned about and unit-tested, not
+  observed. Queues is also in public beta and `experimentalTriggers` is named
+  that for a reason — the polling worker exists partly as insurance.
+- **OCR does not run in production at all.** Tesseract does its work in a
+  spawned worker thread, which never starts inside a Next.js route handler; the
+  call simply never returns. So scans are read locally by the worker and refused
+  on Vercel. The refusal says which of the two it is, but it means the deployed
+  service is meaningfully less capable than the local one, and I found that out
+  by having a job hang rather than by reading a doc.
+- **Nothing was load-tested.** One worker, one document at a time. I have never
+  had two consumers race for the same job outside a unit test, and the test I
+  would write first is "two concurrent deliveries of one job id produce exactly
+  one extraction".
+- **The job layer has thin test coverage.** 47 tests, but only a handful touch
+  the routes and the claim parsing; nothing covers the worker loop, the
+  broadcast, or the Realtime subscription. Two of the bugs I found in that layer
+  were found by running it, not by testing it — a worker spinning on a phantom
+  job because PostgREST returns a row of nulls rather than null, and a job left
+  in `queued` forever because the stalled-job sweep only ran inside the worker
+  that was not running.
+- **Offset paging drifts.** The upload history pages with `limit`/`offset`,
+  which is fine for a list a person reads, but a row arriving mid-read shifts
+  everything down a page. A cursor on `created_at` is the correct fix.
+- **No auth anywhere.** Any caller can create a job, read any job by id, and
+  list every job. The Realtime channel is keyed by an unguessable UUID, which is
+  the same capability model the status endpoint already had — but "no worse than
+  the existing hole" is not a security model. An owner column and RLS policies
+  are the first thing this needs before a second person uses it.
+- **Abandoned uploads accumulate.** An `awaiting_upload` row whose file never
+  arrives is never cleaned up, and PDFs stay in the bucket forever.
+
+**The parser**
 
 - **Column detection assumes a header row containing "Item" and "Description".**
   Every sample has one. A document that labels its columns differently gets
@@ -184,9 +337,9 @@ way that an empty field does not.
   deliberate here — the brief is about real reasons surviving to the screen —
   but it is not what I would ship. In production it would be an error ID plus
   server-side logging, with the message redacted.
-- **Only one vendor's documents were ever tested.** Everything above follows
-  from that. I have not seen this code meet a document it was not written
-  against.
+- **Only one vendor's documents were ever tested.** Most of the parser section
+  follows from that. I have not seen this code meet a document it was not
+  written against.
 
 ### What I'd do with three more days
 
@@ -208,9 +361,14 @@ way that an empty field does not.
    pallets or 16. Right now the refusal is the end of the road; it should be the
    start of a question with an answer that gets remembered for that customer's
    documents.
-5. **Real error handling at the boundary** as described above, plus a size/page
-   ceiling with streaming progress, since a 200-page set would currently block a
-   request for a long time.
+5. **Prove the deployed path.** Drive documents through the Vercel Queues
+   consumer rather than the local worker, write the concurrency test, and either
+   get OCR working in a serverless runtime (a worker-thread-free tesseract build
+   with its language data bundled) or move it behind a hosted OCR API so the
+   deployed service is not the weaker one.
+6. **Real error handling at the boundary** as described above — an error ID plus
+   server-side logging instead of the raw exception — and an owner column with
+   RLS policies so the job endpoints are not open.
 
 ---
 
@@ -222,7 +380,15 @@ way that an empty field does not.
   each pins a case where the correct answer is "we are not going to tell you
   that", plus the two invariants that every number and every refusal quotes
   text really printed on the page it cites.
-- Built with Claude Code. The design decisions above are mine and I can walk
-  through any of them; the traceability invariant and the double-rounding fix in
-  `lineArithmeticRefusals` both came out of writing the tests rather than the
-  other way round.
+- The async pipeline needs four migrations applied and a `service_role` key;
+  [docs/supabase-setup.md](docs/supabase-setup.md) has the steps and says
+  plainly what is verified and what is not. Without any of that,
+  `POST /api/extract` still reads a document synchronously.
+- Built with Claude Code. The design decisions are mine and I can walk through
+  any of them. Several of the ones I am most pleased with came out of being
+  wrong first: the traceability invariant and a double-rounding bug in
+  `lineArithmeticRefusals` came from writing the tests; the OCR confidence floor
+  came from discovering that a 60% bar silently deleted two table columns; and
+  the `Evidence.source` field exists because a UI string of mine claimed figures
+  were "read directly from the page" on a document where every figure came from
+  a scan.
