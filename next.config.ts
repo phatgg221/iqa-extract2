@@ -15,8 +15,17 @@ const nextConfig: NextConfig = {
   // Naming the file here forces it into the bundle for every API route that
   // reads a PDF. It works locally without this because node_modules is right
   // there on disk.
+  // Tesseract has the same problem twice over. It starts its engine with
+  // `new Worker(workerPath)` — a path resolved at runtime, so the tracer never
+  // sees the worker script — and that script then loads the WASM core the same
+  // way. Neither gets deployed, `createWorker` never returns, and the symptom
+  // is a job that stalls on the first scanned page rather than an error.
   outputFileTracingIncludes: {
-    "/api/**": ["./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs"],
+    "/api/**": [
+      "./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs",
+      "./node_modules/tesseract.js/src/**",
+      "./node_modules/tesseract.js-core/**",
+    ],
   },
 };
 

@@ -13,6 +13,7 @@
  * refuse the weak ones and the screen can say which figures were guessed at.
  */
 
+import os from 'node:os';
 import { createWorker, type Worker } from 'tesseract.js';
 import { encodeGrayPng } from './png';
 import type { OcrFn, PageRaster, TextCell } from './pdf';
@@ -58,9 +59,17 @@ interface OcrWord {
 
 let shared: Promise<Worker> | null = null;
 
-/** One worker per process; spinning one up costs seconds and a language download. */
+/**
+ * One worker per process; spinning one up costs seconds and a language download.
+ *
+ * `cachePath` matters more than it looks. Tesseract caches the downloaded
+ * `eng.traineddata` at `cachePath || '.'`, and on a serverless host the working
+ * directory is read-only — so the default sends a ~15 MB write at a filesystem
+ * that will refuse it. The system temp directory is the one place guaranteed
+ * writable, and it is correct locally too.
+ */
 function worker(): Promise<Worker> {
-  shared ??= createWorker('eng');
+  shared ??= createWorker('eng', 1, { cachePath: os.tmpdir() });
   return shared;
 }
 
