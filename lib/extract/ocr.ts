@@ -170,15 +170,20 @@ function collectWords(data: any): OcrWord[] {
 }
 
 /**
- * How long one page gets. Reading a page takes about a second; anything near
- * this means the engine is not coming back.
+ * How long one page gets, engine startup included.
+ *
+ * Generous because the first page of a cold process pays for the whole
+ * engine: loading the WASM core and fetching ~12 MB of language data. A warm
+ * process reads a page in about a second. Tunable with OCR_PAGE_TIMEOUT_MS,
+ * and it must stay below the consumer's visibility timeout (280s) so a message
+ * is not redelivered while the first invocation is still working.
  *
  * This bound exists because of a real failure: tesseract spawns a worker
  * thread, which never starts inside a Next.js route handler, so the call hung
  * and left the job sitting in `processing` until the stalled-job sweep caught
  * it ten minutes later. A page we cannot read in time is a refusal, not a hang.
  */
-const PAGE_TIMEOUT_MS = 60_000;
+const PAGE_TIMEOUT_MS = Number(process.env.OCR_PAGE_TIMEOUT_MS ?? 150_000);
 
 /**
  * The `OcrFn` to hand to `readPages({ ocr })`.
